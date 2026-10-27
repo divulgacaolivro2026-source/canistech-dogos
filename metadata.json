@@ -1,0 +1,6 @@
+{
+  "name": "CanisTech - Plataforma Canina Inteligente",
+  "description": "Plataforma web integrada e prontuário digital (DogOS) para saúde preventiva, mapa canino, nutrição, adoção e reprodução ética canina.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
