@@ -32,10 +32,49 @@ export interface DonationRecord {
   tier: 'diamante' | 'ouro' | 'prata' | 'bronze';
 }
 
+export interface PedigreeAncestor {
+  name: string;
+  regNumber?: string; // Número de registro RG / CBKC / FCI
+  registrationNumber?: string; // Alias de compatibilidade
+}
+
+export interface DogPedigree {
+  // 1ª Geração: Pais
+  father?: PedigreeAncestor;
+  mother?: PedigreeAncestor;
+  // 2ª Geração: Avós Paternos e Maternos
+  paternalGrandfather?: PedigreeAncestor;
+  paternalGrandmother?: PedigreeAncestor;
+  maternalGrandfather?: PedigreeAncestor;
+  maternalGrandmother?: PedigreeAncestor;
+  // 3ª Geração: Bisavós Paternos e Maternos (8 ancestrais para Wright 3 Gerações)
+  paternalGGF1?: PedigreeAncestor; // Pai do Avô Paterno
+  paternalGGM1?: PedigreeAncestor; // Mãe do Avô Paterno
+  paternalGGF2?: PedigreeAncestor; // Pai da Avó Paterna
+  paternalGGM2?: PedigreeAncestor; // Mãe da Avó Paterna
+  maternalGGF1?: PedigreeAncestor; // Pai do Avô Materno
+  maternalGGM1?: PedigreeAncestor; // Mãe do Avô Materno
+  maternalGGF2?: PedigreeAncestor; // Pai da Avó Materna
+  maternalGGM2?: PedigreeAncestor; // Mãe da Avó Materna
+}
+
+export interface LgpdConsentRecord {
+  accepted: boolean;
+  timestamp: string;
+  acceptedAt?: string;
+  policyVersion: string;
+  consentHash: string;
+  userEmail?: string;
+  userAgent?: string;
+  dpoChannel?: string;
+}
+
 export interface DogProfile {
   id: string;
   ownerEmail?: string;         // Isolamento estrito por conta (Multi-tenant)
   name: string;                // Obrigatório
+  kennelAffix?: string;        // Afixo do Canil (Ex: von CanisTech, do Vale Dourado)
+  pedigree?: DogPedigree;      // Árvore Genealógica de 3 Gerações (Pais, Avós e Bisavós)
   breed: string;               // Obrigatório
   breedGroup: BreedGroup;
   birthDate: string;           // Obrigatório (YYYY-MM-DD ou DD/MM/AAAA) - Base para fase biológica
@@ -51,12 +90,22 @@ export interface DogProfile {
   AdultBaseWeightMax?: number; // Peso adulto máximo de referência da raça
   bcsScore: number;            // Escala WSAVA 1 a 9
   microchip: string;           // Obrigatório na ficha / Propagado automaticamente ao RG Pet
-  rgNumber: string;            // Gerado automaticamente (Ex: SP-8124-THAN)
+  rgNumber: string;            // Gerado automaticamente (Ex: SP-8124-THAN ou 000.000.000-CT)
+  rgcNumber?: string;           // Alias de compatibilidade para Registro Geral Canino
   bloodType?: DogBloodType | string; // OPCIONAL (Requisito 5)
   photoUrl: string;            // Obrigatório (DataURL Base64 da foto real do cão)
+  photo?: string;              // Alias de compatibilidade
+  avatar?: string;             // Alias de compatibilidade
+  imageUrl?: string;           // Alias de compatibilidade
+  vitalStatus?: 'alive' | 'deceased'; // Status Vital: 'alive' (padrão) | 'deceased'
+  deceasedDate?: string;       // Data de falecimento caso vitalStatus === 'deceased'
+  rgcIssuedAt?: string;        // Data ISO da primeira impressão/emissão do documento
+  rgcExpiresAt?: string;       // Validade de 1 ano após rgcIssuedAt
+  rgcSecurityHash?: string;    // Hash único de autenticidade anti-clonagem
   city: string;                // Obrigatório
   state: string;               // Obrigatório (UF)
   tutorName: string;           // Obrigatório
+  tutorCpf?: string;           // CPF opcional mascarado do tutor
   tutorPhone: string;          // Obrigatório
   tutorEmail?: string;
   dietGramsPerDay: number;
@@ -211,6 +260,7 @@ export interface YloveCandidate {
   tutorName: string;
   tutorRole: string;
   photoUrl: string;
+  pedigree?: DogPedigree;
 }
 
 export interface AdoptionDog {
@@ -294,6 +344,7 @@ export interface AuthUser {
   createdAt: string;
   lastLoginAt: string;
   accessToken?: string;
+  token?: string;
 }
 
 export interface DailyActivityRecord {
@@ -320,6 +371,8 @@ export interface SecurityAuditLog {
   status: 'SUCCESS' | 'WARNING' | 'DENIED';
   details: string;
 }
+
+export type AuditLogEntry = SecurityAuditLog;
 
 export interface RegisteredAccount {
   id: string;

@@ -17,6 +17,8 @@ import {
   generateVaccine7dEmailContent,
 } from '../utils/vaccineUtils';
 import { generateAndDownloadOfficialRgCard } from '../utils/rgCardPdfGenerator';
+import { OfficialRgcDocument } from './OfficialRgcDocument';
+import { formatRgcCpf, QrCodeSvg } from '../utils/qrCodeGenerator';
 import {
   QrCode,
   Download,
@@ -92,9 +94,12 @@ interface DogOSDashboardProps {
   onOpenVetChat: (initialQuery?: string) => void;
   onNavigateToDonation?: () => void;
   onNavigateToEncyclopedia?: () => void;
+  onNavigateToVaccines?: () => void;
   onUpdateVaccine?: (vaccine: VaccineRecord) => void;
   onAddVaccine?: (vaccine: VaccineRecord) => void;
   onOpenRegisterDog?: () => void;
+  onUpdateDog?: (updatedDog: DogProfile) => void;
+  onOpenEditDog?: (dog: DogProfile) => void;
 }
 
 export const DogOSDashboard: React.FC<DogOSDashboardProps> = ({
@@ -110,9 +115,12 @@ export const DogOSDashboard: React.FC<DogOSDashboardProps> = ({
   onOpenVetChat,
   onNavigateToDonation,
   onNavigateToEncyclopedia,
+  onNavigateToVaccines,
   onUpdateVaccine,
   onAddVaccine,
   onOpenRegisterDog,
+  onUpdateDog,
+  onOpenEditDog,
 }) => {
   // Empty State if no dog is active or registered
   if (!dog) {
@@ -213,41 +221,8 @@ export const DogOSDashboard: React.FC<DogOSDashboardProps> = ({
   const [isChartExpanded, setIsChartExpanded] = useState<boolean>(false);
 
   // Vaccine proximity notification system states
-  const [showNotificationDrawer, setShowNotificationDrawer] = useState<boolean>(false);
   const [dismissedBanner, setDismissedBanner] = useState<boolean>(false);
   const [simulatedDateOffsetDays, setSimulatedDateOffsetDays] = useState<number>(0);
-  const [vaccineFilterTab, setVaccineFilterTab] = useState<'all' | 'urgent' | 'safe'>('all');
-  const [showApplyVaccineModal, setShowApplyVaccineModal] = useState<VaccineWithProximity | null>(null);
-  const [showAddVaccineModal, setShowAddVaccineModal] = useState<boolean>(false);
-
-  // Form states for applying vaccine
-  const [appliedLotInput, setAppliedLotInput] = useState<string>('');
-  const [appliedClinicInput, setAppliedClinicInput] = useState<string>('');
-  const [appliedDateInput, setAppliedDateInput] = useState<string>('');
-
-  // Form states for adding new vaccine
-  const [newVacName, setNewVacName] = useState<string>('');
-  const [newVacCategory, setNewVacCategory] = useState<'vacina' | 'antiparasitario' | 'vermifugo' | 'outro'>('vacina');
-  const [newVacManufacturer, setNewVacManufacturer] = useState<string>('');
-  const [newVacLot, setNewVacLot] = useState<string>('');
-  const [newVacLastDate, setNewVacLastDate] = useState<string>('');
-  const [newVacNextDate, setNewVacNextDate] = useState<string>('');
-  const [newVacDesc, setNewVacDesc] = useState<string>('');
-
-  // 7-Day Vaccine Reminder Scheduling System States (E-mail & Push Notifications)
-  const [reminderEmail, setReminderEmail] = useState<string>(
-    dog.tutorEmail || 'camila.tutor@canistech.com.br'
-  );
-  const [reminderEmailEnabled, setReminderEmailEnabled] = useState<boolean>(true);
-  const [reminderPushEnabled, setReminderPushEnabled] = useState<boolean>(true);
-  const [reminderSoundEnabled, setReminderSoundEnabled] = useState<boolean>(true);
-  const [reminder24hEnabled, setReminder24hEnabled] = useState<boolean>(true);
-  const [pushPermission, setPushPermission] = useState<'granted' | 'denied' | 'default' | 'unsupported'>(() =>
-    getPushPermissionStatus()
-  );
-  const [disabledReminderVacIds, setDisabledReminderVacIds] = useState<string[]>([]);
-  const [reminderModalTab, setReminderModalTab] = useState<'schedule' | 'channels' | 'preview'>('schedule');
-  const [previewEmailVaccine, setPreviewEmailVaccine] = useState<VaccineWithProximity | null>(null);
   const [simulatedPushAlert, setSimulatedPushAlert] = useState<{
     title: string;
     body: string;
@@ -275,32 +250,15 @@ export const DogOSDashboard: React.FC<DogOSDashboardProps> = ({
     return list.map((v) => calculateVaccineProximity(v, referenceDate));
   }, [vaccines, dog.id, referenceDate]);
 
-  // 7-Day reminder schedule calculations
-  const scheduledVaccinesCount = useMemo(() => {
-    return processedVaccines.filter((v) => !disabledReminderVacIds.includes(v.id)).length;
-  }, [processedVaccines, disabledReminderVacIds]);
-
+  // 7-Day reminder alerts
   const triggered7dAlerts = useMemo(() => {
-    return processedVaccines.filter((v) => v.is7dAlertActive && !disabledReminderVacIds.includes(v.id));
-  }, [processedVaccines, disabledReminderVacIds]);
+    return processedVaccines.filter((v) => v.is7dAlertActive);
+  }, [processedVaccines]);
 
   // Urgency summary counts
   const vaccineSummary = useMemo(() => {
     return getVaccineUrgencySummary(processedVaccines);
   }, [processedVaccines]);
-
-  // Filtered vaccines for Module 3 display
-  const filteredVaccines = useMemo(() => {
-    if (vaccineFilterTab === 'urgent') {
-      return processedVaccines.filter(
-        (v) => v.urgency === 'overdue' || v.urgency === 'imminent' || v.urgency === 'upcoming'
-      );
-    }
-    if (vaccineFilterTab === 'safe') {
-      return processedVaccines.filter((v) => v.urgency === 'safe');
-    }
-    return processedVaccines;
-  }, [processedVaccines, vaccineFilterTab]);
 
   // Filter weight records for the active dog
   const dogWeightHistory = useMemo(() => {
@@ -540,6 +498,16 @@ export const DogOSDashboard: React.FC<DogOSDashboardProps> = ({
   };
 
   const handleDownloadRgPdf = () => {
+    if (!dog) return;
+    if (dog.vitalStatus === 'deceased') {
+      triggerToast('Emissão de documentos bloqueada: animal com registro de óbito.');
+      return;
+    }
+    if (!dog.photoUrl || dog.photoUrl.trim() === '' || dog.photoUrl.toLowerCase().includes('placeholder')) {
+      triggerToast('Fotografia 3x4 obrigatória para emissão do RGC. Abra a edição para enviar a foto.');
+      if (onOpenEditDog) onOpenEditDog(dog);
+      return;
+    }
     triggerToast(`Gerando Carteira Oficial de Identidade Canina (RGC) de ${dog.name}...`);
     try {
       generateAndDownloadOfficialRgCard(dog);
@@ -564,149 +532,6 @@ export const DogOSDashboard: React.FC<DogOSDashboardProps> = ({
     );
     window.open(`https://wa.me/?text=${text}`, '_blank');
     triggerToast(`Alerta de ${vac.name} pronto para envio via WhatsApp!`);
-  };
-
-  // Open apply dose modal
-  const handleOpenApplyModal = (vac: VaccineWithProximity) => {
-    setShowApplyVaccineModal(vac);
-    setAppliedDateInput(formatDateBR(referenceDate));
-    setAppliedLotInput(vac.lot || `LT-${Math.floor(1000 + Math.random() * 9000)}`);
-    setAppliedClinicInput(vac.clinic || 'Hospital Veterinário Pet Care');
-  };
-
-  // Confirm dose application and update schedule
-  const handleConfirmVaccineApplication = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!showApplyVaccineModal) return;
-
-    const appDate = appliedDateInput || formatDateBR(referenceDate);
-    const appDateObj = parseDateBR(appDate);
-
-    let cycleDays = 365;
-    if (showApplyVaccineModal.category === 'antiparasitario') cycleDays = 30;
-    else if (showApplyVaccineModal.category === 'vermifugo') cycleDays = 90;
-
-    const nextDateObj = new Date(appDateObj);
-    nextDateObj.setDate(nextDateObj.getDate() + cycleDays);
-    const nextDateStr = formatDateBR(nextDateObj);
-
-    const updated: VaccineRecord = {
-      ...showApplyVaccineModal,
-      lastDate: appDate,
-      nextDate: nextDateStr,
-      lot: appliedLotInput.trim() || showApplyVaccineModal.lot,
-      clinic: appliedClinicInput.trim() || showApplyVaccineModal.clinic,
-      status: 'valid',
-      daysRemaining: cycleDays,
-    };
-
-    if (onUpdateVaccine) {
-      onUpdateVaccine(updated);
-    }
-    setShowApplyVaccineModal(null);
-    triggerToast(`✓ Dose de "${updated.name}" registrada! Próximo reforço em ${nextDateStr}`);
-  };
-
-  // Add new vaccine submission
-  const handleAddNewVaccineSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newVacName.trim()) return;
-
-    const newVac: VaccineRecord = {
-      id: `vac-${Date.now()}`,
-      dogId: dog.id,
-      name: newVacName.trim(),
-      description: newVacDesc.trim() || 'Profilaxia preventiva cadastrada no prontuário.',
-      manufacturer: newVacManufacturer.trim() || 'Laboratório Veterinário',
-      lot: newVacLot.trim() || `LT-${Math.floor(1000 + Math.random() * 9000)}`,
-      lastDate: newVacLastDate || formatDateBR(referenceDate),
-      nextDate: newVacNextDate || getRelativeDateStr(365, referenceDate),
-      daysRemaining: 365,
-      status: 'valid',
-      category: newVacCategory,
-      clinic: 'Clínica Veterinária Morumbi',
-    };
-
-    if (onAddVaccine) {
-      onAddVaccine(newVac);
-    }
-    setShowAddVaccineModal(false);
-    setNewVacName('');
-    setNewVacDesc('');
-    setNewVacManufacturer('');
-    setNewVacLot('');
-    setNewVacLastDate('');
-    setNewVacNextDate('');
-    triggerToast(`Nova imunização "${newVac.name}" adicionada ao calendário!`);
-  };
-
-  // 7-Day Reminder System Handlers
-  const handleRequestPushPermission = async () => {
-    const res = await requestPushNotificationPermission();
-    setPushPermission(res);
-    if (res === 'granted') {
-      if (reminderSoundEnabled) playNotificationChime();
-      triggerToast('✓ Notificações Push autorizadas no seu navegador! Os lembretes de 7 dias serão entregues na tela.');
-    } else if (res === 'denied') {
-      triggerToast('Aviso: Permissão Push bloqueada no navegador. Habilite nas configurações do site para receber avisos.');
-    } else {
-      triggerToast('Modo Push Simulado ativo para demonstração.');
-    }
-  };
-
-  const handleToggleVaccineReminder = (vacId: string) => {
-    setDisabledReminderVacIds((prev) => {
-      const exists = prev.includes(vacId);
-      const updated = exists ? prev.filter((id) => id !== vacId) : [...prev, vacId];
-      const vac = processedVaccines.find((v) => v.id === vacId);
-      triggerToast(
-        exists
-          ? `✓ Lembrete de 7 dias agendado para "${vac?.name || 'vacina'}" (E-mail & Push)`
-          : `Lembrete de 7 dias pausado para "${vac?.name || 'vacina'}"`
-      );
-      return updated;
-    });
-  };
-
-  const handleTestDispatch7dReminder = (vac: VaccineWithProximity) => {
-    if (reminderSoundEnabled) {
-      playNotificationChime();
-    }
-
-    const title = `[DogOS CanisTech] 🔔 Alerta 7 Dias: ${vac.name}`;
-    const body = `A dose da vacina ${vac.name} de ${dog.name} vence no dia ${vac.nextDate}. Agende o reforço com antecedência!`;
-
-    let pushSent = false;
-    if (reminderPushEnabled) {
-      pushSent = dispatchBrowserNotification(title, {
-        body,
-        icon: dog.photoUrl,
-      });
-
-      setSimulatedPushAlert({
-        title,
-        body,
-        time: 'Agora mesmo',
-        vacName: vac.name,
-      });
-    }
-
-    const channelsDesc = [
-      reminderEmailEnabled ? `E-mail (${reminderEmail})` : null,
-      reminderPushEnabled ? (pushSent ? 'Push Web Nativo' : 'Push Notificação') : null,
-    ]
-      .filter(Boolean)
-      .join(' & ');
-
-    triggerToast(
-      `✓ Lembrete de 7 dias disparado para ${vac.name}! Enviado via ${channelsDesc || 'Canais CanisTech'}.`
-    );
-  };
-
-  const handleOpenEmailPreview = (vac: VaccineWithProximity) => {
-    setPreviewEmailVaccine(vac);
-    setReminderModalTab('preview');
-    setShowReminderModal(true);
   };
 
   const activeLifeStage = dog.lifeStage || (
@@ -751,15 +576,12 @@ export const DogOSDashboard: React.FC<DogOSDashboardProps> = ({
               <div className="pt-2 flex items-center gap-2">
                 <button
                   onClick={() => {
-                    const vac = processedVaccines.find((v) => v.name === simulatedPushAlert.vacName);
-                    if (vac) setPreviewEmailVaccine(vac);
-                    setReminderModalTab('preview');
-                    setShowReminderModal(true);
+                    if (onNavigateToVaccines) onNavigateToVaccines();
                     setSimulatedPushAlert(null);
                   }}
-                  className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-lg text-[10px] transition-colors"
+                  className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-lg text-[10px] transition-colors cursor-pointer"
                 >
-                  Ver E-mail do Alerta
+                  Ver no Módulo de Vacinas
                 </button>
                 <button
                   onClick={() => setSimulatedPushAlert(null)}
@@ -804,6 +626,11 @@ export const DogOSDashboard: React.FC<DogOSDashboardProps> = ({
               <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 font-semibold">
                 {dog.breed}
               </span>
+              {dog.kennelAffix && (
+                <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 font-semibold">
+                  Afixo: {dog.kennelAffix}
+                </span>
+              )}
               <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-semibold flex items-center gap-1 border border-emerald-200">
                 <ShieldCheck className="w-3.5 h-3.5" />
                 Microchip Ativo
@@ -846,20 +673,20 @@ export const DogOSDashboard: React.FC<DogOSDashboardProps> = ({
 
         {/* Action Buttons */}
         <div className="flex flex-wrap items-center gap-2 shrink-0">
-          {/* Notification Center Trigger */}
+          {/* Atalho Direto para a Nova Página Exclusiva de Vacinas & Imunização */}
           <button
-            onClick={() => setShowNotificationDrawer(true)}
-            className={`relative inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all ${
+            onClick={() => onNavigateToVaccines && onNavigateToVaccines()}
+            className={`relative inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
               vaccineSummary.urgentCount > 0
                 ? 'bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 shadow-xs'
                 : 'bg-slate-100 hover:bg-slate-200 text-slate-800'
             }`}
-            title="Central de Notificações de Vacinas e Lembretes"
+            title="Ir para a Página Exclusiva de Vacinas & Imunização (WSAVA 2024)"
           >
             {vaccineSummary.urgentCount > 0 ? (
               <BellRing className="w-4 h-4 text-amber-600 animate-bounce" />
             ) : (
-              <Bell className="w-4 h-4 text-slate-600" />
+              <Syringe className="w-4 h-4 text-emerald-600" />
             )}
             <span>Vacinas</span>
             {vaccineSummary.urgentCount > 0 && (
@@ -896,6 +723,43 @@ export const DogOSDashboard: React.FC<DogOSDashboardProps> = ({
         </div>
       </div>
 
+      {/* Memorial Banner for Deceased Dogs */}
+      {dog.vitalStatus === 'deceased' && (
+        <div className="bg-gradient-to-r from-rose-500/15 via-rose-500/10 to-slate-500/10 border-2 border-rose-300 dark:border-rose-800 rounded-3xl p-5 shadow-sm space-y-2 animate-in fade-in duration-200">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3.5">
+              <div className="p-2.5 rounded-2xl bg-rose-600 text-white shadow-sm shrink-0">
+                <Heart className="w-6 h-6" />
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-rose-200 dark:bg-rose-900/60 text-rose-950 dark:text-rose-200 border border-rose-300 dark:border-rose-700">
+                    Registro de Falecimento / Memória
+                  </span>
+                  <span className="text-xs text-rose-800 dark:text-rose-300 font-semibold font-mono">
+                    Óbito em: {dog.deceasedDate || 'Registrado'}
+                  </span>
+                </div>
+                <h2 className="text-base sm:text-lg font-bold text-slate-950 dark:text-white font-heading">
+                  Conta e Operações Ativas de {dog.name} Encerradas
+                </h2>
+                <p className="text-xs text-slate-700 dark:text-slate-300 max-w-2xl leading-relaxed">
+                  Em memória de {dog.name}. As operações clínicas ativas (como agendamentos, novos registros e emissões de documentos) foram finalizadas por normas de segurança. O histórico de peso, biometria e vacinas permanece arquivado com carinho para consulta.
+                </p>
+              </div>
+            </div>
+            {onOpenEditDog && (
+              <button
+                onClick={() => onOpenEditDog(dog)}
+                className="self-start sm:self-auto px-4 py-2 bg-white dark:bg-slate-800 border border-rose-300 dark:border-rose-700 hover:bg-rose-50 dark:hover:bg-slate-700 text-rose-950 dark:text-rose-200 rounded-xl text-xs font-bold transition-colors"
+              >
+                Gerenciar Ficha do Pet
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Hero Visual Notification Banner for Vaccines Proximity */}
       {vaccineSummary.urgentCount > 0 && !dismissedBanner ? (
         <div className="bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-amber-500/5 border border-amber-300/80 rounded-2xl p-4 shadow-sm animate-in fade-in slide-in-from-top-2 duration-200">
@@ -927,11 +791,8 @@ export const DogOSDashboard: React.FC<DogOSDashboardProps> = ({
                     .map((vac) => (
                       <button
                         key={vac.id}
-                        onClick={() => {
-                          const elem = document.getElementById('agenda-preventiva');
-                          if (elem) elem.scrollIntoView({ behavior: 'smooth' });
-                        }}
-                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all hover:scale-102 ${
+                        onClick={() => onNavigateToVaccines && onNavigateToVaccines()}
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all hover:scale-102 cursor-pointer ${
                           vac.urgency === 'overdue'
                             ? 'bg-rose-100 text-rose-900 border-rose-300'
                             : vac.urgency === 'imminent'
@@ -953,7 +814,7 @@ export const DogOSDashboard: React.FC<DogOSDashboardProps> = ({
                   <div className="flex items-center gap-1.5 pt-1.5 text-[11px] font-semibold text-amber-950">
                     <BellRing className="w-3.5 h-3.5 text-amber-700 animate-bounce" />
                     <span>
-                      🔔 <strong>{triggered7dAlerts.length} lembrete(s) com 7 dias de antecedência</strong> acionados e enviados via E-mail ({reminderEmail}) e Push!
+                      🔔 <strong>{triggered7dAlerts.length} lembrete(s) com 7 dias de antecedência</strong> acionados e enviados via E-mail ({dog.tutorEmail || 'cadastrado'}) e Push!
                     </span>
                   </div>
                 )}
@@ -963,24 +824,18 @@ export const DogOSDashboard: React.FC<DogOSDashboardProps> = ({
             {/* Quick Actions in Banner */}
             <div className="flex flex-wrap md:flex-col lg:flex-row items-center gap-2 shrink-0">
               <button
-                onClick={() => {
-                  setReminderModalTab('schedule');
-                  setShowReminderModal(true);
-                }}
-                className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-semibold shadow-xs flex items-center gap-1.5 transition-colors"
-                title="Configurar agendamento de lembretes com 7 dias de antecedência"
+                onClick={() => onNavigateToVaccines && onNavigateToVaccines()}
+                className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-semibold shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                title="Acessar página de vacinas e lembretes de 7 dias"
               >
                 <CalendarClock className="w-3.5 h-3.5" />
-                <span>Lembretes 7 Dias</span>
+                <span>Ver Vacinas & Lembretes</span>
               </button>
               <button
-                onClick={() => {
-                  const elem = document.getElementById('agenda-preventiva');
-                  if (elem) elem.scrollIntoView({ behavior: 'smooth' });
-                }}
-                className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold shadow-xs flex items-center gap-1.5 transition-colors"
+                onClick={() => onNavigateToVaccines && onNavigateToVaccines()}
+                className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
               >
-                <span>Ver Agenda Completa</span>
+                <span>Central de Imunização</span>
                 <ChevronRight className="w-3.5 h-3.5" />
               </button>
               <button
@@ -989,14 +844,14 @@ export const DogOSDashboard: React.FC<DogOSDashboardProps> = ({
                     handleSendVaccineWhatsApp(vaccineSummary.mostUrgent);
                   }
                 }}
-                className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-semibold shadow-xs flex items-center gap-1.5 transition-colors"
+                className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-semibold shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
               >
                 <MessageCircle className="w-3.5 h-3.5" />
                 <span>Agendar no WhatsApp</span>
               </button>
               <button
                 onClick={() => setDismissedBanner(true)}
-                className="p-2 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-amber-200/40 transition-colors"
+                className="p-2 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-amber-200/40 transition-colors cursor-pointer"
                 title="Ocultar banner temporariamente"
               >
                 <X className="w-4 h-4" />
@@ -1013,10 +868,10 @@ export const DogOSDashboard: React.FC<DogOSDashboardProps> = ({
             </span>
           </div>
           <button
-            onClick={() => setDismissedBanner(false)}
-            className="text-amber-700 hover:text-amber-900 underline font-semibold text-xs ml-2"
+            onClick={() => onNavigateToVaccines && onNavigateToVaccines()}
+            className="text-amber-700 hover:text-amber-900 underline font-semibold text-xs ml-2 cursor-pointer"
           >
-            Expandir alerta
+            Abrir Central de Vacinas
           </button>
         </div>
       ) : null}
@@ -1025,63 +880,183 @@ export const DogOSDashboard: React.FC<DogOSDashboardProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left Column: 8 cols - Clinical modules */}
         <div className="lg:col-span-8 space-y-6">
-          {/* Module 1: Carteira de Identidade Canina Digital */}
-          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm relative overflow-hidden">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+          {/* Module 1: Documento Oficial de Identificação e Biometria Canina (RGC) */}
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 sm:p-6 border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 mb-4 gap-2">
               <div className="flex items-center gap-2">
-                <span className="p-1.5 rounded-lg bg-orange-100 text-[#E07A5F]">
+                <span className="p-1.5 rounded-lg bg-orange-100 dark:bg-orange-950 text-[#E07A5F]">
                   <FileCheck2 className="w-4 h-4" />
                 </span>
-                <h2 className="text-base font-bold text-slate-900 font-heading">
-                  Carteira de Identidade Canina Digital (RG Pet)
-                </h2>
-              </div>
-              <span className="text-[11px] font-mono text-slate-500 bg-slate-100 px-2 py-0.5 rounded font-medium">
-                CFMV DOC #{dog.rgNumber}
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
-              {/* Photo & QR Preview */}
-              <div className="md:col-span-4 flex items-center gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200">
-                <img
-                  src={dog.photoUrl}
-                  alt={dog.name}
-                  className="w-16 h-16 rounded-lg object-cover shadow-xs shrink-0"
-                />
-                <div className="space-y-1">
-                  <div
-                    onClick={() => setShowQrModal(true)}
-                    className="w-12 h-12 bg-white p-1 rounded-lg border border-slate-200 shadow-xs flex items-center justify-center cursor-pointer hover:border-slate-400 transition-colors"
-                    title="Clique para expandir QR Tag"
-                  >
-                    <QrCode className="w-full h-full text-slate-800" />
-                  </div>
-                  <p className="text-[10px] text-slate-500 font-medium">Scan de Emergência</p>
-                </div>
-              </div>
-
-              {/* Data points */}
-              <div className="md:col-span-8 grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-                <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200/60">
-                  <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Microchip ISO</p>
-                  <p className="text-xs font-mono font-bold text-slate-900 mt-0.5 truncate">{dog.microchip}</p>
-                  <p className="text-[10px] text-emerald-700 font-semibold flex items-center gap-0.5 mt-0.5">
-                    ✓ Homologado
+                <div>
+                  <h2 className="text-base font-bold text-slate-900 dark:text-white font-heading">
+                    Documento Oficial de Identificação e Biometria Canina (RGC)
+                  </h2>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Padrão Oficial Brasileiro (CIN / CPF Canino) • Proporção ISO ID-1 com QR Code e Hash de Segurança
                   </p>
                 </div>
-                <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200/60">
-                  <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Nascimento</p>
-                  <p className="text-xs font-bold text-slate-900 mt-0.5 font-mono">{dog.birthDate}</p>
-                  <p className="text-[10px] text-slate-500 mt-0.5">{dog.ageYears} anos de idade</p>
-                </div>
-                <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200/60">
-                  <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Tutor(a) Titular</p>
-                  <p className="text-xs font-bold text-slate-900 mt-0.5 truncate">{dog.tutorName}</p>
-                  <p className="text-[10px] text-slate-500 mt-0.5 font-mono">{dog.tutorPhone}</p>
-                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {onOpenEditDog && (
+                  <button
+                    onClick={() => onOpenEditDog(dog)}
+                    className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-300 transition-colors"
+                  >
+                    Editar Dados / Foto
+                  </button>
+                )}
               </div>
             </div>
+
+            <OfficialRgcDocument
+              dog={dog}
+              onOpenEditPhoto={() => onOpenEditDog && onOpenEditDog(dog)}
+              onRenewBiennialLifeProof={() => onOpenEditDog && onOpenEditDog(dog)}
+              onUpdateDog={onUpdateDog}
+            />
+          </div>
+
+          {/* Module 1B: Dossiê Genealógico • Árvore de Pedigree de 3 Gerações & Afixo do Canil */}
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 sm:p-6 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+            <div className="flex flex-wrap items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 gap-2">
+              <div className="flex items-center gap-2">
+                <span className="p-1.5 rounded-lg bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400">
+                  <Sparkles className="w-4 h-4" />
+                </span>
+                <div>
+                  <h2 className="text-base font-bold text-slate-900 dark:text-white font-heading">
+                    Árvore Genealógica de 3 Gerações (Pedigree &amp; Afixo do Canil)
+                  </h2>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Afixo Oficial: <strong>{dog.kennelAffix || 'Registro Particular / Não informado'}</strong> • Base para cálculo determinístico do Coeficiente de Wright (COI)
+                  </p>
+                </div>
+              </div>
+              {onOpenEditDog && (
+                <button
+                  onClick={() => onOpenEditDog(dog)}
+                  className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-300 transition-colors"
+                >
+                  Editar Pedigree
+                </button>
+              )}
+            </div>
+
+            {dog.pedigree && (dog.pedigree.father?.name || dog.pedigree.mother?.name) ? (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                {/* 1ª Geração: Exemplar Titular */}
+                <div className="p-3.5 rounded-2xl bg-slate-900 text-white flex flex-col justify-center space-y-1.5 border border-slate-800">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400 font-mono">
+                    1ª GERAÇÃO • EXEMPLAR TITULAR
+                  </span>
+                  <p className="text-sm font-black font-heading uppercase">{dog.name}</p>
+                  <p className="text-[11px] text-slate-300">{dog.breed}</p>
+                  {dog.kennelAffix && (
+                    <p className="text-[10px] text-emerald-400 font-semibold">
+                      Canil: {dog.kennelAffix}
+                    </p>
+                  )}
+                  <p className="text-[10px] font-mono text-slate-400">
+                    RGC: {formatRgcCpf(dog.rgNumber, dog.id)}
+                  </p>
+                </div>
+
+                {/* 2ª Geração: Pais (Padreador & Matriz) */}
+                <div className="space-y-2 flex flex-col justify-center">
+                  <div className="p-3 rounded-xl bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/60 space-y-0.5">
+                    <span className="text-[9.5px] font-bold uppercase text-blue-700 dark:text-blue-400 block">
+                      2ª GERAÇÃO • PAI (PADREADOR)
+                    </span>
+                    <strong className="text-slate-900 dark:text-white block truncate">
+                      {dog.pedigree.father?.name || 'Não informado'}
+                    </strong>
+                    <span className="text-[10px] font-mono text-slate-500 block">
+                      RG/CBKC: {dog.pedigree.father?.regNumber || dog.pedigree.father?.registrationNumber || 'N/I'}
+                    </span>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-rose-50/70 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800/60 space-y-0.5">
+                    <span className="text-[9.5px] font-bold uppercase text-rose-700 dark:text-rose-400 block">
+                      2ª GERAÇÃO • MÃE (MATRIZ)
+                    </span>
+                    <strong className="text-slate-900 dark:text-white block truncate">
+                      {dog.pedigree.mother?.name || 'Não informado'}
+                    </strong>
+                    <span className="text-[10px] font-mono text-slate-500 block">
+                      RG/CBKC: {dog.pedigree.mother?.regNumber || dog.pedigree.mother?.registrationNumber || 'N/I'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* 3ª Geração: 4 Avós (Paternos e Maternos) */}
+                <div className="grid grid-cols-1 gap-1.5">
+                  <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <span className="text-[9px] font-bold uppercase text-slate-400 block">Avô Paterno</span>
+                      <strong className="text-[11px] text-slate-900 dark:text-white block truncate">
+                        {dog.pedigree.paternalGrandfather?.name || 'Não informado'}
+                      </strong>
+                    </div>
+                    <span className="text-[9.5px] font-mono text-slate-500 shrink-0">
+                      {dog.pedigree.paternalGrandfather?.regNumber || dog.pedigree.paternalGrandfather?.registrationNumber || 'N/I'}
+                    </span>
+                  </div>
+
+                  <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <span className="text-[9px] font-bold uppercase text-slate-400 block">Avó Paterna</span>
+                      <strong className="text-[11px] text-slate-900 dark:text-white block truncate">
+                        {dog.pedigree.paternalGrandmother?.name || 'Não informado'}
+                      </strong>
+                    </div>
+                    <span className="text-[9.5px] font-mono text-slate-500 shrink-0">
+                      {dog.pedigree.paternalGrandmother?.regNumber || dog.pedigree.paternalGrandmother?.registrationNumber || 'N/I'}
+                    </span>
+                  </div>
+
+                  <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <span className="text-[9px] font-bold uppercase text-slate-400 block">Avô Materno</span>
+                      <strong className="text-[11px] text-slate-900 dark:text-white block truncate">
+                        {dog.pedigree.maternalGrandfather?.name || 'Não informado'}
+                      </strong>
+                    </div>
+                    <span className="text-[9.5px] font-mono text-slate-500 shrink-0">
+                      {dog.pedigree.maternalGrandfather?.regNumber || dog.pedigree.maternalGrandfather?.registrationNumber || 'N/I'}
+                    </span>
+                  </div>
+
+                  <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <span className="text-[9px] font-bold uppercase text-slate-400 block">Avó Materna</span>
+                      <strong className="text-[11px] text-slate-900 dark:text-white block truncate">
+                        {dog.pedigree.maternalGrandmother?.name || 'Não informado'}
+                      </strong>
+                    </div>
+                    <span className="text-[9.5px] font-mono text-slate-500 shrink-0">
+                      {dog.pedigree.maternalGrandmother?.regNumber || dog.pedigree.maternalGrandmother?.registrationNumber || 'N/I'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="p-4 rounded-2xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-950 dark:text-amber-200">
+                <div>
+                  <strong className="block">Aguardando Árvore Genealógica (3 Gerações)</strong>
+                  <p className="text-[11px] text-amber-800 dark:text-amber-300">
+                    Preencha o Pedigree (Pai, Mãe e 4 Avós com RG/CBKC) no cadastro do cão para habilitar a árvore genealógica completa e o cálculo determinístico de COI no YlovePet.
+                  </p>
+                </div>
+                {onOpenEditDog && (
+                  <button
+                    onClick={() => onOpenEditDog(dog)}
+                    className="px-3.5 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl font-bold text-xs shrink-0 transition-colors"
+                  >
+                    + Preencher Pedigree
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Module 2: Escore Corporal (BCS / IMC) & Evolução de Peso com Recharts */}
@@ -1507,413 +1482,42 @@ export const DogOSDashboard: React.FC<DogOSDashboardProps> = ({
             </div>
           </div>
 
-          {/* Module 3: Agenda Preventiva & Imunização - Sistema de Notificação Visual Inteligente */}
+          {/* Módulo 3: Central de Vacinas & Imunização Canina (Atalho para Página Exclusiva) */}
           <div
             id="agenda-preventiva"
-            className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-5 scroll-mt-24"
+            className="bg-gradient-to-r from-emerald-900/10 via-teal-900/5 to-slate-50 dark:from-emerald-950/30 dark:via-slate-900 dark:to-slate-900 rounded-3xl p-6 border border-emerald-500/20 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-5 scroll-mt-24"
           >
-            {/* Header: Title & Main Action Buttons */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-900 border border-amber-300/40">
-                    <ShieldAlert className="w-4 h-4 text-amber-600" />
-                  </div>
-                  <h3 className="text-base font-bold text-slate-900 font-heading">
-                    Agenda Preventiva & Imunização
+            <div className="flex items-start gap-3.5">
+              <div className="p-3 rounded-2xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 shrink-0">
+                <Syringe className="w-6 h-6" />
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white font-heading">
+                    Central de Vacinas & Imunização Canina
                   </h3>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                    WSAVA 2024
+                  </span>
                   {vaccineSummary.urgentCount > 0 && (
-                    <span className="text-[10px] bg-rose-600 text-white font-bold px-2 py-0.5 rounded-full animate-pulse">
-                      {vaccineSummary.urgentCount} Alertas
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200 animate-pulse">
+                      {vaccineSummary.urgentCount} Alerta(s) Ativo(s)
                     </span>
                   )}
                 </div>
-                <p className="text-xs text-slate-500">
-                  Sistema de notificações visuais com cálculo dinâmico de proximidade baseado na data atual: <strong className="text-slate-700">{formattedReferenceDate}</strong>
+                <p className="text-xs text-slate-600 dark:text-slate-400 max-w-xl leading-relaxed">
+                  Os protocolos de vacinação (V8/V10/V12, Raiva, Tosse dos Canis, alertas com 7 dias de antecedência e emissão da Carteira Física com selos 45x20mm) foram centralizados na nova página exclusiva de Vacinas.
                 </p>
               </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  onClick={() => setShowAddVaccineModal(true)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shadow-xs transition-colors"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>+ Nova Vacina</span>
-                </button>
-                <button
-                  onClick={() => {
-                    setReminderModalTab('schedule');
-                    setShowReminderModal(true);
-                  }}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-950 border border-amber-300 text-xs font-semibold shadow-xs transition-colors"
-                  title="Configurar avisos de 7 dias de antecedência por E-mail e Push Notifications"
-                >
-                  <Bell className="w-3.5 h-3.5 text-amber-600" />
-                  <span>Lembretes 7 Dias</span>
-                  <span className="px-1.5 py-0.2 rounded-full bg-amber-200 text-amber-950 font-mono text-[10px] font-bold">
-                    {scheduledVaccinesCount}/{processedVaccines.length}
-                  </span>
-                </button>
-              </div>
             </div>
-
-            {/* Proximity Status Ribbon & Interactive Time Simulator */}
-            <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200/80 space-y-3">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                {/* Vencidas */}
-                <div
-                  className={`p-2.5 rounded-lg border text-center transition-all ${
-                    vaccineSummary.overdueCount > 0
-                      ? 'bg-rose-50 border-rose-300 text-rose-900 shadow-xs'
-                      : 'bg-white border-slate-200 text-slate-600'
-                  }`}
-                >
-                  <span className="block text-[10px] uppercase font-bold tracking-wider text-slate-400">
-                    Atrasadas
-                  </span>
-                  <div className="flex items-center justify-center gap-1 mt-0.5">
-                    {vaccineSummary.overdueCount > 0 && (
-                      <span className="w-2 h-2 rounded-full bg-rose-600 animate-ping"></span>
-                    )}
-                    <span className="text-lg font-bold font-mono">
-                      {vaccineSummary.overdueCount}
-                    </span>
-                  </div>
-                  <span className="text-[10px] text-slate-500">Ação imediata</span>
-                </div>
-
-                {/* Iminentes (<=7 dias) */}
-                <div
-                  className={`p-2.5 rounded-lg border text-center transition-all ${
-                    vaccineSummary.imminentCount > 0
-                      ? 'bg-amber-50 border-amber-400 text-amber-950 font-semibold shadow-xs'
-                      : 'bg-white border-slate-200 text-slate-600'
-                  }`}
-                >
-                  <span className="block text-[10px] uppercase font-bold tracking-wider text-amber-700">
-                    Iminentes (≤7 dias)
-                  </span>
-                  <div className="flex items-center justify-center gap-1 mt-0.5">
-                    {vaccineSummary.imminentCount > 0 && (
-                      <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
-                    )}
-                    <span className="text-lg font-bold font-mono text-amber-900">
-                      {vaccineSummary.imminentCount}
-                    </span>
-                  </div>
-                  <span className="text-[10px] text-amber-800">Urgente reforço</span>
-                </div>
-
-                {/* Próximas (<=30 dias) */}
-                <div
-                  className={`p-2.5 rounded-lg border text-center transition-all ${
-                    vaccineSummary.upcomingCount > 0
-                      ? 'bg-blue-50 border-blue-300 text-blue-900 shadow-xs'
-                      : 'bg-white border-slate-200 text-slate-600'
-                  }`}
-                >
-                  <span className="block text-[10px] uppercase font-bold tracking-wider text-blue-700">
-                    Próximas (≤30 dias)
-                  </span>
-                  <span className="block text-lg font-bold font-mono mt-0.5 text-blue-900">
-                    {vaccineSummary.upcomingCount}
-                  </span>
-                  <span className="text-[10px] text-blue-800">Agendar este mês</span>
-                </div>
-
-                {/* Em dia */}
-                <div className="p-2.5 bg-white rounded-lg border border-slate-200 text-center">
-                  <span className="block text-[10px] uppercase font-bold tracking-wider text-emerald-700">
-                    Proteção Ativa
-                  </span>
-                  <span className="block text-lg font-bold font-mono mt-0.5 text-emerald-800">
-                    {vaccineSummary.safeCount}
-                  </span>
-                  <span className="text-[10px] text-emerald-700">Imunização segura</span>
-                </div>
-              </div>
-
-              {/* Simulation Bar */}
-              <div className="pt-2 border-t border-slate-200/60 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
-                <span className="flex items-center gap-1.5 font-medium text-[11px]">
-                  <Clock className="w-3.5 h-3.5 text-slate-400" />
-                  <span>Simular data para testes de proximidade:</span>
-                </span>
-                <div className="flex items-center gap-1 bg-white p-0.5 rounded-lg border border-slate-200 text-[11px]">
-                  <button
-                    onClick={() => {
-                      setSimulatedDateOffsetDays(0);
-                      triggerToast(`Data de referência calibrada para Hoje (${formatDateBR(new Date())})`);
-                    }}
-                    className={`px-2 py-0.5 rounded-md font-semibold transition-colors ${
-                      simulatedDateOffsetDays === 0
-                        ? 'bg-slate-900 text-white shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    Hoje
-                  </button>
-                  <button
-                    onClick={() => {
-                      setSimulatedDateOffsetDays(7);
-                      triggerToast('Simulando avanço de +7 dias nas datas de vacinas.');
-                    }}
-                    className={`px-2 py-0.5 rounded-md font-semibold transition-colors ${
-                      simulatedDateOffsetDays === 7
-                        ? 'bg-slate-900 text-white shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    +7 dias
-                  </button>
-                  <button
-                    onClick={() => {
-                      setSimulatedDateOffsetDays(15);
-                      triggerToast('Simulando avanço de +15 dias nas datas de vacinas.');
-                    }}
-                    className={`px-2 py-0.5 rounded-md font-semibold transition-colors ${
-                      simulatedDateOffsetDays === 15
-                        ? 'bg-slate-900 text-white shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    +15 dias
-                  </button>
-                  <button
-                    onClick={() => {
-                      setSimulatedDateOffsetDays(30);
-                      triggerToast('Simulando avanço de +30 dias nas datas de vacinas.');
-                    }}
-                    className={`px-2 py-0.5 rounded-md font-semibold transition-colors ${
-                      simulatedDateOffsetDays === 30
-                        ? 'bg-slate-900 text-white shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    +30 dias
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Filter Tabs */}
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl text-xs">
-                <button
-                  onClick={() => setVaccineFilterTab('all')}
-                  className={`px-3 py-1.5 rounded-lg font-semibold transition-all ${
-                    vaccineFilterTab === 'all'
-                      ? 'bg-white text-slate-900 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Todas ({processedVaccines.length})
-                </button>
-                <button
-                  onClick={() => setVaccineFilterTab('urgent')}
-                  className={`px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-all ${
-                    vaccineFilterTab === 'urgent'
-                      ? 'bg-amber-500 text-white shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  <span>Atenção & Próximas</span>
-                  <span
-                    className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
-                      vaccineFilterTab === 'urgent'
-                        ? 'bg-amber-700 text-white'
-                        : 'bg-amber-200 text-amber-900'
-                    }`}
-                  >
-                    {vaccineSummary.urgentCount}
-                  </span>
-                </button>
-                <button
-                  onClick={() => setVaccineFilterTab('safe')}
-                  className={`px-3 py-1.5 rounded-lg font-semibold transition-all ${
-                    vaccineFilterTab === 'safe'
-                      ? 'bg-emerald-700 text-white shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Em Dia ({vaccineSummary.safeCount})
-                </button>
-              </div>
-
-              <span className="text-[11px] text-slate-400 font-mono">
-                Exibindo {filteredVaccines.length} de {processedVaccines.length} itens
-              </span>
-            </div>
-
-            {/* Vaccine Cards Responsive Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
-              {filteredVaccines.map((v) => {
-                const isUrgent = v.urgency === 'overdue' || v.urgency === 'imminent';
-                return (
-                  <div
-                    key={v.id}
-                    className={`bg-white p-4 rounded-xl border transition-all duration-200 flex flex-col justify-between space-y-3 shadow-xs hover:shadow-md ${v.cardBorder}`}
-                  >
-                    <div className="space-y-2">
-                      {/* Top Header: Category & Proximity Countdown Badge */}
-                      <div className="flex items-center justify-between gap-1">
-                        <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
-                          {v.category === 'antiparasitario'
-                            ? 'Antiparasitário'
-                            : v.category === 'vermifugo'
-                            ? 'Vermífugo'
-                            : 'Vacina Canina'}
-                        </span>
-                        <div className="flex items-center gap-1.5">
-                          {isUrgent && (
-                            <span className="relative flex h-2 w-2">
-                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-                              <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-600"></span>
-                            </span>
-                          )}
-                          <span
-                            className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${v.badgeBg} ${v.badgeText} ${v.badgeBorder}`}
-                          >
-                            {v.urgencyLabel}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Name & Clinical Description */}
-                      <div>
-                        <h4 className="font-bold text-sm text-slate-900 leading-snug">
-                          {v.name}
-                        </h4>
-                        <p className="text-[11px] text-slate-500 line-clamp-2 mt-1 leading-relaxed">
-                          {v.description}
-                        </p>
-                      </div>
-
-                      {/* Manufacturer & Batch */}
-                      <div className="text-[10px] font-mono text-slate-500 bg-slate-50 p-2 rounded-lg border border-slate-100 flex items-center justify-between">
-                        <span className="truncate max-w-[150px] font-medium text-slate-700">
-                          {v.manufacturer}
-                        </span>
-                        <span className="text-slate-400">Lote: {v.lot}</span>
-                      </div>
-
-                      {/* Immunization Cycle Visual Progress Bar */}
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-[10px] text-slate-500">
-                          <span>Janela de Imunidade:</span>
-                          <span className="font-mono font-semibold text-slate-700">
-                            {v.progressPercent}% decorrido
-                          </span>
-                        </div>
-                        <div className="w-full h-1.5 rounded-full bg-slate-100 overflow-hidden">
-                          <div
-                            className={`h-full transition-all duration-500 rounded-full ${v.progressColor}`}
-                            style={{ width: `${v.progressPercent}%` }}
-                          />
-                        </div>
-                      </div>
-
-                      {/* Dates Summary */}
-                      <div className="pt-2 border-t border-slate-100 grid grid-cols-2 gap-1 text-[11px]">
-                        <div>
-                          <span className="block text-[10px] text-slate-400 font-medium">Última dose:</span>
-                          <span className="font-mono text-slate-600">{v.lastDate}</span>
-                        </div>
-                        <div className="text-right">
-                          <span className="block text-[10px] text-slate-400 font-medium">Próximo reforço:</span>
-                          <span
-                            className={`font-mono font-bold ${
-                              v.urgency === 'overdue'
-                                ? 'text-rose-600'
-                                : v.urgency === 'imminent'
-                                ? 'text-amber-600'
-                                : 'text-slate-800'
-                            }`}
-                          >
-                            {v.nextDate}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* 7-Day Reminder Alert Pill */}
-                      <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
-                        <div className="flex items-center gap-1.5 truncate">
-                          <Bell
-                            className={`w-3.5 h-3.5 shrink-0 ${
-                              !disabledReminderVacIds.includes(v.id) ? 'text-amber-600' : 'text-slate-400'
-                            }`}
-                          />
-                          <span className="text-slate-500 text-[10px]">Alerta 7d:</span>
-                          <span className="font-mono font-semibold text-slate-800 text-[11px]">{v.alertDate7d}</span>
-                        </div>
-                        {v.is7dAlertActive ? (
-                          <button
-                            onClick={() => handleOpenEmailPreview(v)}
-                            className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-950 border border-amber-300 font-bold text-[10px] shrink-0 hover:bg-amber-200 transition-colors flex items-center gap-1"
-                            title="Lembrete de 7 dias ativo! Clique para ver e-mail"
-                          >
-                            <span>⚡ Disparado</span>
-                          </button>
-                        ) : !disabledReminderVacIds.includes(v.id) ? (
-                          <button
-                            onClick={() => handleToggleVaccineReminder(v.id)}
-                            className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 font-medium text-[10px] shrink-0 hover:bg-emerald-100 transition-colors"
-                            title="Lembrete 7d agendado (E-mail & Push). Clique para pausar"
-                          >
-                            ✓ Agendado
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => handleToggleVaccineReminder(v.id)}
-                            className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 font-medium text-[10px] shrink-0 hover:bg-slate-200 transition-colors"
-                            title="Lembrete 7d pausado. Clique para ativar"
-                          >
-                            Pausado
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Action Buttons on Card */}
-                    <div className="pt-2 border-t border-slate-100 flex items-center gap-1.5">
-                      <button
-                        onClick={() => handleOpenApplyModal(v)}
-                        className="flex-1 py-1.5 px-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition-colors shadow-2xs"
-                        title="Registrar que esta dose foi aplicada hoje"
-                      >
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                        <span>Aplicar Dose</span>
-                      </button>
-
-                      <button
-                        onClick={() => handleTestDispatch7dReminder(v)}
-                        className="p-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 transition-colors"
-                        title={`Testar disparo do lembrete de 7 dias (${v.alertDate7d}) por E-mail e Push`}
-                      >
-                        <BellRing className="w-4 h-4 text-amber-600" />
-                      </button>
-
-                      <button
-                        onClick={() => handleOpenEmailPreview(v)}
-                        className="p-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-900 border border-blue-200 transition-colors"
-                        title="Visualizar modelo do e-mail de alerta de 7 dias"
-                      >
-                        <Mail className="w-4 h-4 text-blue-600" />
-                      </button>
-
-                      <button
-                        onClick={() => handleSendVaccineWhatsApp(v)}
-                        className="p-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 transition-colors"
-                        title="Enviar lembrete via WhatsApp para veterinário ou tutor"
-                      >
-                        <MessageCircle className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            <button
+              type="button"
+              onClick={() => onNavigateToVaccines && onNavigateToVaccines()}
+              className="px-5 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl text-xs font-bold flex items-center justify-center gap-2 shadow-md hover:shadow-lg transition-all active:scale-95 shrink-0 cursor-pointer"
+            >
+              <span>Acessar Página de Vacinas</span>
+              <ChevronRight className="w-4 h-4" />
+            </button>
           </div>
 
           {/* Module 4: Dieta & Exercícios Bento Strip */}
@@ -2275,8 +1879,22 @@ export const DogOSDashboard: React.FC<DogOSDashboardProps> = ({
               </button>
             </div>
 
-            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 inline-block shadow-inner">
-              <QrCode className="w-40 h-40 mx-auto text-slate-900" />
+            <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 inline-block shadow-inner">
+              <QrCodeSvg
+                value={
+                  typeof window !== 'undefined'
+                    ? `${window.location.origin}/?view=dossier&dogId=${encodeURIComponent(
+                        dog.id
+                      )}&rgc=${encodeURIComponent(formatRgcCpf(dog.rgNumber, dog.id))}`
+                    : `https://canistech.com.br/?view=dossier&dogId=${dog.id}&rgc=${formatRgcCpf(
+                        dog.rgNumber,
+                        dog.id
+                      )}`
+                }
+                size={160}
+                className="mx-auto"
+                title={`QR Tag de Emergência: ${dog.name}`}
+              />
             </div>
 
             <div className="text-xs space-y-1 text-slate-600">
@@ -2369,902 +1987,6 @@ export const DogOSDashboard: React.FC<DogOSDashboardProps> = ({
         </div>
       )}
 
-      {/* Modal: Central de Agendamento de Lembretes Preventivos (Aviso de 7 Dias) */}
-      {showReminderModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 md:p-4">
-          <div className="bg-white rounded-2xl max-w-2xl w-full p-5 md:p-6 shadow-2xl space-y-4 border border-slate-200 animate-in zoom-in-95 duration-150 max-h-[92vh] flex flex-col">
-            {/* Modal Header */}
-            <div className="flex justify-between items-start pb-3 border-b border-slate-100 shrink-0">
-              <div className="flex items-start gap-3">
-                <div className="p-2 rounded-xl bg-amber-500/15 text-amber-950 border border-amber-300/60 shrink-0 mt-0.5">
-                  <CalendarClock className="w-5 h-5 text-amber-600" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-bold text-base text-slate-900 font-heading">
-                      Agendamento de Lembretes • 7 Dias de Antecedência
-                    </h3>
-                    <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 font-bold text-[10px] border border-amber-300">
-                      Regra Ativa: 7 Dias
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-500">
-                    Avisos preventivos por E-mail & Notificações Push para o tutor de <strong>{dog.name}</strong> ({dog.tutorName})
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowReminderModal(false)}
-                className="text-slate-400 hover:text-slate-600 text-sm font-bold p-1 rounded-lg"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Modal Navigation Tabs */}
-            <div className="flex items-center gap-2 border-b border-slate-100 pb-2 text-xs font-semibold shrink-0">
-              <button
-                onClick={() => setReminderModalTab('schedule')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-colors ${
-                  reminderModalTab === 'schedule'
-                    ? 'bg-slate-900 text-white shadow-xs'
-                    : 'text-slate-600 hover:bg-slate-100'
-                }`}
-              >
-                <Calendar className="w-3.5 h-3.5" />
-                <span>Agenda de 7 Dias ({scheduledVaccinesCount})</span>
-              </button>
-              <button
-                onClick={() => setReminderModalTab('channels')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-colors ${
-                  reminderModalTab === 'channels'
-                    ? 'bg-slate-900 text-white shadow-xs'
-                    : 'text-slate-600 hover:bg-slate-100'
-                }`}
-              >
-                <Sliders className="w-3.5 h-3.5" />
-                <span>Canais (E-mail & Push)</span>
-              </button>
-              <button
-                onClick={() => setReminderModalTab('preview')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-colors ${
-                  reminderModalTab === 'preview'
-                    ? 'bg-slate-900 text-white shadow-xs'
-                    : 'text-slate-600 hover:bg-slate-100'
-                }`}
-              >
-                <Mail className="w-3.5 h-3.5" />
-                <span>Pré-visualização do E-mail</span>
-              </button>
-            </div>
-
-            {/* Tab 1: Agenda de 7 Dias por Vacina */}
-            {reminderModalTab === 'schedule' && (
-              <div className="space-y-4 overflow-y-auto flex-1 pr-1 text-xs">
-                {/* Rule explanation banner */}
-                <div className="p-3 bg-amber-50/70 border border-amber-200/90 rounded-xl space-y-1 text-amber-950">
-                  <div className="flex items-center gap-2 font-bold text-xs">
-                    <BellRing className="w-4 h-4 text-amber-600 shrink-0" />
-                    <span>Como funciona a notificação com 7 dias de antecedência:</span>
-                  </div>
-                  <p className="text-[11px] text-amber-900 leading-relaxed">
-                    O CanisTech calcula diariamente a proximidade de cada vacina. Exatamente <strong>7 dias antes</strong> da data prevista para o reforço, o sistema dispara automaticamente um <strong>e-mail detalhado</strong> e uma <strong>push notification</strong> para que o tutor consiga agendar sem atrasar a janela de imunidade.
-                  </p>
-                  <div className="pt-1 flex flex-wrap items-center gap-3 text-[11px] font-mono text-amber-800">
-                    <span>Data de Referência: <strong>{formattedReferenceDate}</strong></span>
-                    <span>•</span>
-                    <span>Alertas Ativos Hoje: <strong>{triggered7dAlerts.length}</strong></span>
-                  </div>
-                </div>
-
-                {/* Vaccines Schedule Table / List */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 uppercase tracking-wider px-1">
-                    <span>Imunização / Profilaxia</span>
-                    <span>Data 7d / Status</span>
-                  </div>
-
-                  {processedVaccines.map((vac) => {
-                    const isScheduled = !disabledReminderVacIds.includes(vac.id);
-                    return (
-                      <div
-                        key={vac.id}
-                        className={`p-3 rounded-xl border transition-all space-y-2 ${
-                          vac.is7dAlertActive
-                            ? 'bg-amber-50/60 border-amber-300'
-                            : !isScheduled
-                            ? 'bg-slate-50/60 border-slate-200 opacity-60'
-                            : 'bg-white border-slate-200 hover:border-slate-300'
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="font-bold text-slate-900">{vac.name}</span>
-                              <span className="text-[10px] uppercase font-mono px-1.5 py-0.2 rounded bg-slate-100 text-slate-600">
-                                {vac.category || 'vacina'}
-                              </span>
-                            </div>
-                            <p className="text-[11px] text-slate-500 line-clamp-1">{vac.description}</p>
-                          </div>
-
-                          <div className="text-right shrink-0">
-                            {vac.is7dAlertActive ? (
-                              <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-950 border border-amber-400 font-bold text-[10px] animate-pulse">
-                                ⚡ Alerta 7d Disparado!
-                              </span>
-                            ) : vac.is7dAlertOverdue ? (
-                              <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-900 border border-rose-300 font-bold text-[10px]">
-                                🚨 Vencida
-                              </span>
-                            ) : isScheduled ? (
-                              <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold text-[10px]">
-                                🗓️ Agendado em {vac.daysUntil7dAlert}d
-                              </span>
-                            ) : (
-                              <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 font-medium text-[10px]">
-                                Pausado
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Dates grid */}
-                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px] font-mono pt-1 border-t border-slate-100 text-slate-600">
-                          <div>
-                            <span className="block text-[10px] text-slate-400 font-sans">Próxima Dose:</span>
-                            <span className="font-bold text-slate-900">{vac.nextDate}</span>
-                          </div>
-                          <div>
-                            <span className="block text-[10px] text-amber-700 font-sans font-semibold">
-                              🔔 Disparo do Alerta (7d antes):
-                            </span>
-                            <span className="font-bold text-amber-900">{vac.alertDate7d}</span>
-                          </div>
-                          <div className="sm:text-right">
-                            <span className="block text-[10px] text-slate-400 font-sans">Canais:</span>
-                            <span className="text-slate-700 text-[10px]">E-mail & Push</span>
-                          </div>
-                        </div>
-
-                        {/* Actions for this vaccine */}
-                        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100/70">
-                          <button
-                            type="button"
-                            onClick={() => handleToggleVaccineReminder(vac.id)}
-                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors ${
-                              isScheduled
-                                ? 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-                                : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200'
-                            }`}
-                          >
-                            {isScheduled ? <span>Pausar Lembrete 7d</span> : <span>✓ Ativar Lembrete 7d</span>}
-                          </button>
-
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setPreviewEmailVaccine(vac);
-                                setReminderModalTab('preview');
-                              }}
-                              className="px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-900 border border-blue-200 text-[11px] font-semibold flex items-center gap-1 transition-colors"
-                              title="Visualizar o e-mail que o tutor receberá 7 dias antes"
-                            >
-                              <Eye className="w-3 h-3 text-blue-600" />
-                              <span>Ver E-mail</span>
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => handleTestDispatch7dReminder(vac)}
-                              className="px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-950 border border-amber-300 text-[11px] font-bold flex items-center gap-1 transition-colors"
-                              title="Simular disparo imediato deste alerta via E-mail e Push"
-                            >
-                              <Send className="w-3 h-3 text-amber-700" />
-                              <span>Testar Disparo 7d</span>
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Tab 2: Canais de Disparo (E-mail & Push) */}
-            {reminderModalTab === 'channels' && (
-              <div className="space-y-4 overflow-y-auto flex-1 pr-1 text-xs">
-                {/* E-mail Channel */}
-                <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="p-1.5 rounded-lg bg-blue-100 text-blue-800">
-                        <Mail className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <h4 className="font-bold text-slate-900">Alerta por E-mail (7 Dias Antes)</h4>
-                        <p className="text-[11px] text-slate-500">
-                          Disparo automático de e-mail institucional com ficha da vacina e orientações.
-                        </p>
-                      </div>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={reminderEmailEnabled}
-                        onChange={(e) => setReminderEmailEnabled(e.target.checked)}
-                        className="sr-only peer"
-                      />
-                      <div className="w-9 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-slate-900"></div>
-                    </label>
-                  </div>
-
-                  <div>
-                    <label className="block font-semibold text-slate-700 mb-1">
-                      Endereço de E-mail do Tutor:
-                    </label>
-                    <input
-                      type="email"
-                      value={reminderEmail}
-                      onChange={(e) => setReminderEmail(e.target.value)}
-                      placeholder="seu.email@exemplo.com.br"
-                      className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono text-slate-900 outline-none focus:border-slate-900"
-                    />
-                    <span className="block mt-1 text-[10px] text-slate-500">
-                      Tutor cadastrado: <strong>{dog.tutorName}</strong> ({dog.city}, {dog.state})
-                    </span>
-                  </div>
-                </div>
-
-                {/* Push Notification Channel */}
-                <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="p-1.5 rounded-lg bg-amber-100 text-amber-900">
-                        <Smartphone className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <h4 className="font-bold text-slate-900">Web Push Notifications (Navegador & Mobile)</h4>
-                        <p className="text-[11px] text-slate-500">
-                          Notificação pop-up nativa na tela do tutor 7 dias antes do vencimento.
-                        </p>
-                      </div>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={reminderPushEnabled}
-                        onChange={(e) => setReminderPushEnabled(e.target.checked)}
-                        className="sr-only peer"
-                      />
-                      <div className="w-9 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-600"></div>
-                    </label>
-                  </div>
-
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-white rounded-lg border border-slate-200">
-                    <div className="space-y-0.5">
-                      <span className="font-semibold text-slate-800 text-xs">
-                        Status da Permissão Web Push:
-                      </span>
-                      <div className="flex items-center gap-1.5">
-                        {pushPermission === 'granted' ? (
-                          <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-900 font-bold text-[10px] border border-emerald-300">
-                            ✓ Ativo e Autorizado no Navegador
-                          </span>
-                        ) : pushPermission === 'denied' ? (
-                          <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-900 font-bold text-[10px] border border-rose-300">
-                            ⚠️ Bloqueado pelo Navegador
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 font-semibold text-[10px] border border-amber-300">
-                            Pendente de Autorização
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={handleRequestPushPermission}
-                      className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold shrink-0 transition-colors shadow-xs"
-                    >
-                      {pushPermission === 'granted' ? 'Permissão Confirmada' : 'Autorizar Push Agora'}
-                    </button>
-                  </div>
-
-                  <div className="pt-1 flex items-center justify-between text-xs text-slate-600">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={reminderSoundEnabled}
-                        onChange={(e) => setReminderSoundEnabled(e.target.checked)}
-                        className="rounded text-slate-900"
-                      />
-                      <span className="flex items-center gap-1">
-                        <Volume2 className="w-3.5 h-3.5 text-slate-500" />
-                        <span>Tocar alerta sonoro (chime sintetizado) ao disparar notificação</span>
-                      </span>
-                    </label>
-                  </div>
-                </div>
-
-                {/* Additional Notification Preferences */}
-                <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-2.5">
-                  <h4 className="font-bold text-slate-900">Configurações de Antecedência Adicionais</h4>
-                  
-                  <label className="flex items-center gap-2 cursor-pointer text-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={true}
-                      disabled
-                      className="rounded text-slate-900 opacity-60"
-                    />
-                    <span>
-                      <strong>Disparo Principal:</strong> Avisar 7 dias antes do vencimento (Obrigatório CanisTech)
-                    </span>
-                  </label>
-
-                  <label className="flex items-center gap-2 cursor-pointer text-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={reminder24hEnabled}
-                      onChange={(e) => setReminder24hEnabled(e.target.checked)}
-                      className="rounded text-slate-900"
-                    />
-                    <span>Disparo complementar de emergência 24 horas antes do vencimento</span>
-                  </label>
-
-                  <label className="flex items-center gap-2 cursor-pointer text-slate-700">
-                    <input type="checkbox" defaultChecked className="rounded text-slate-900" />
-                    <span>Permitir agendamento direto com 1 clique via WhatsApp ({dog.tutorPhone})</span>
-                  </label>
-                </div>
-              </div>
-            )}
-
-            {/* Tab 3: Pré-visualização do E-mail */}
-            {reminderModalTab === 'preview' && (
-              <div className="space-y-3 overflow-y-auto flex-1 pr-1 text-xs">
-                {/* Vaccine preview selector */}
-                <div className="flex items-center justify-between gap-2 p-2.5 bg-slate-50 rounded-xl border border-slate-200">
-                  <span className="font-semibold text-slate-700">Selecione a Imunização para pré-visualizar:</span>
-                  <select
-                    value={previewEmailVaccine?.id || processedVaccines[0]?.id}
-                    onChange={(e) => {
-                      const found = processedVaccines.find((v) => v.id === e.target.value);
-                      if (found) setPreviewEmailVaccine(found);
-                    }}
-                    className="bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs text-slate-800 font-medium outline-none"
-                  >
-                    {processedVaccines.map((v) => (
-                      <option key={v.id} value={v.id}>
-                        {v.name} (Reforço: {v.nextDate})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Simulated Email Client Envelope */}
-                {(() => {
-                  const vac = previewEmailVaccine || processedVaccines[0];
-                  const emailData = generateVaccine7dEmailContent(dog, vac);
-                  return (
-                    <div className="border border-slate-300 rounded-2xl overflow-hidden shadow-xs bg-white">
-                      {/* Email Header Metadata Bar */}
-                      <div className="bg-slate-100 p-3 border-b border-slate-200 space-y-1 text-[11px] font-mono text-slate-600">
-                        <div className="flex justify-between items-center text-slate-500 font-sans text-[10px] pb-1 border-b border-slate-200/60">
-                          <span>Caixa de Entrada • CanisTech DogOS Mail Engine</span>
-                          <span>Disparo: {vac.alertDate7d} (7 dias antes)</span>
-                        </div>
-                        <p>
-                          <strong>De:</strong> CanisTech Alertas Preventivos &lt;notificacoes@canistech.com.br&gt;
-                        </p>
-                        <p>
-                          <strong>Para:</strong> {dog.tutorName} &lt;{reminderEmail}&gt;
-                        </p>
-                        <p className="font-bold text-slate-900">
-                          <strong>Assunto:</strong> {emailData.subject}
-                        </p>
-                      </div>
-
-                      {/* Email Visual Body */}
-                      <div className="p-5 space-y-4 font-sans">
-                        {/* Email Brand Header */}
-                        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                          <div className="flex items-center gap-2">
-                            <div className="w-8 h-8 rounded-lg bg-orange-600 flex items-center justify-center text-white font-bold text-sm shadow-xs">
-                              🐾
-                            </div>
-                            <div>
-                              <span className="font-bold text-slate-900 tracking-tight text-sm">CanisTech DogOS</span>
-                              <span className="block text-[10px] text-slate-400">Gestão Biométrica & Bem-Estar Preventivo</span>
-                            </div>
-                          </div>
-                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 font-bold border border-amber-300">
-                            Aviso de 7 Dias
-                          </span>
-                        </div>
-
-                        {/* Email Message */}
-                        <div className="space-y-2 text-xs text-slate-700 leading-relaxed">
-                          <p className="font-semibold text-slate-900">
-                            Olá, {dog.tutorName}!
-                          </p>
-                          <p>
-                            Este é um lembrete preventivo programado pelo sistema <strong>DogOS CanisTech</strong>. Faltam <strong>exatamente 7 dias</strong> para a data prevista do reforço de imunização do seu cão:
-                          </p>
-
-                          {/* Highlight Card */}
-                          <div className="p-3.5 bg-amber-50/60 border border-amber-300/80 rounded-xl space-y-2">
-                            <div className="flex items-start justify-between">
-                              <div>
-                                <span className="text-[10px] uppercase font-bold text-amber-800 tracking-wider">
-                                  {vac.category === 'antiparasitario' ? 'Antiparasitário' : 'Vacina Canina'}
-                                </span>
-                                <h4 className="text-sm font-bold text-slate-900">{vac.name}</h4>
-                              </div>
-                              <span className="font-mono text-xs font-bold text-rose-700 bg-white px-2 py-0.5 rounded border border-amber-200">
-                                Vence em 7 dias ({vac.nextDate})
-                              </span>
-                            </div>
-
-                            <p className="text-[11px] text-slate-600">{vac.description}</p>
-
-                            <div className="grid grid-cols-2 gap-2 text-[11px] font-mono text-slate-700 pt-2 border-t border-amber-200/60">
-                              <div>
-                                <span className="block text-[10px] text-slate-400 font-sans">Fabricante / Lote:</span>
-                                <span>{vac.manufacturer} ({vac.lot})</span>
-                              </div>
-                              <div>
-                                <span className="block text-[10px] text-slate-400 font-sans">Clínica Credenciada:</span>
-                                <span>{vac.clinic || 'Hospital Veterinário Pet Care'}</span>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Patient info */}
-                          <div className="p-2.5 bg-slate-50 rounded-lg text-[11px] text-slate-600 flex items-center justify-between border border-slate-100">
-                            <span>Paciente: <strong>{dog.name}</strong> ({dog.breed}, {dog.currentWeight}kg)</span>
-                            <span className="font-mono">RG Pet #{dog.rgNumber}</span>
-                          </div>
-
-                          <p className="text-[11px] text-slate-500 italic">
-                            Dica veterinária: A vacinação em dia previne a queda de títulos de anticorpos e garante a circulação protegida em parques e áreas urbanas.
-                          </p>
-                        </div>
-
-                        {/* Call to Actions inside Email */}
-                        <div className="pt-2 flex flex-wrap items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => handleSendVaccineWhatsApp(vac)}
-                            className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-semibold shadow-xs flex items-center gap-1.5 transition-colors"
-                          >
-                            <MessageCircle className="w-3.5 h-3.5" />
-                            <span>Agendar no WhatsApp da Clínica</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleTestDispatch7dReminder(vac)}
-                            className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold shadow-xs flex items-center gap-1.5 transition-colors"
-                          >
-                            <Send className="w-3.5 h-3.5" />
-                            <span>Disparar Este Alerta Agora (Teste)</span>
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })()}
-              </div>
-            )}
-
-            {/* Modal Footer */}
-            <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-100 shrink-0">
-              <span className="text-[11px] text-slate-500">
-                🔔 <strong>{scheduledVaccinesCount}</strong> de <strong>{processedVaccines.length}</strong> lembretes de 7 dias programados
-              </span>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowReminderModal(false)}
-                  className="px-4 py-2 text-slate-600 hover:text-slate-900 text-xs font-semibold"
-                >
-                  Fechar
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowReminderModal(false);
-                    triggerToast('✓ Configuração salva! Os tutores serão avisados com 7 dias de antecedência via E-mail e Push.');
-                  }}
-                  className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5 shadow-xs"
-                >
-                  <Check className="w-3.5 h-3.5" />
-                  <span>Salvar e Ativar Agendamentos</span>
-                </button>
-              </div>
-            </div>
           </div>
-        </div>
-      )}
-
-      {/* Modal / Flyout: Central de Notificações de Imunização */}
-      {showNotificationDrawer && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 border border-slate-200 animate-in zoom-in-95 duration-150 max-h-[90vh] flex flex-col">
-            <div className="flex justify-between items-center pb-3 border-b border-slate-100 shrink-0">
-              <div className="flex items-center gap-2">
-                <div className="p-1.5 rounded-lg bg-amber-500/15 text-amber-900 border border-amber-300/60">
-                  <BellRing className="w-4 h-4 text-amber-600" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-sm text-slate-900 font-heading">
-                    Central de Alertas de Vacinas • {dog.name}
-                  </h3>
-                  <p className="text-[11px] text-slate-500">
-                    Data de hoje: {formattedReferenceDate} • {vaccineSummary.urgentCount} alerta(s) ativos
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowNotificationDrawer(false)}
-                className="text-slate-400 hover:text-slate-600 text-sm font-bold p-1 rounded-lg"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* List of Vaccines sorted by urgency */}
-            <div className="overflow-y-auto space-y-2.5 pr-1 flex-1">
-              {processedVaccines
-                .slice()
-                .sort((a, b) => a.calculatedDaysRemaining - b.calculatedDaysRemaining)
-                .map((vac) => {
-                  const isUrgent = vac.urgency === 'overdue' || vac.urgency === 'imminent';
-                  return (
-                    <div
-                      key={vac.id}
-                      className={`p-3 rounded-xl border text-xs space-y-2 transition-all ${
-                        isUrgent
-                          ? 'bg-amber-50/50 border-amber-300'
-                          : vac.urgency === 'upcoming'
-                          ? 'bg-blue-50/40 border-blue-200'
-                          : 'bg-slate-50 border-slate-200'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-bold text-slate-900">{vac.name}</span>
-                            <span className="text-[10px] text-slate-500 font-mono">
-                              ({vac.category || 'vacina'})
-                            </span>
-                          </div>
-                          <p className="text-[11px] text-slate-500 line-clamp-1">{vac.description}</p>
-                        </div>
-                        <span
-                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${vac.badgeBg} ${vac.badgeText} ${vac.badgeBorder}`}
-                        >
-                          {vac.urgencyLabel}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center justify-between text-[11px] font-mono text-slate-600 pt-1 border-t border-slate-200/60">
-                        <span>Última: {vac.lastDate}</span>
-                        <span className="font-bold text-slate-900">Reforço: {vac.nextDate}</span>
-                      </div>
-
-                      <div className="flex items-center justify-between text-[10px] text-slate-500 pt-0.5">
-                        <span className="font-mono">Disparo 7d: {vac.alertDate7d}</span>
-                        {vac.is7dAlertActive ? (
-                          <span className="text-amber-800 font-bold bg-amber-100 px-1.5 py-0.2 rounded border border-amber-300">
-                            ⚡ Alerta 7d Enviado
-                          </span>
-                        ) : !disabledReminderVacIds.includes(vac.id) ? (
-                          <span className="text-emerald-800 font-medium bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
-                            ✓ Lembrete 7d Ativo
-                          </span>
-                        ) : (
-                          <span className="text-slate-400">Pausado</span>
-                        )}
-                      </div>
-
-                      <div className="flex items-center gap-2 pt-1">
-                        <button
-                          onClick={() => {
-                            setShowNotificationDrawer(false);
-                            handleOpenApplyModal(vac);
-                          }}
-                          className="flex-1 py-1 px-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-[11px] font-semibold flex items-center justify-center gap-1 transition-colors"
-                        >
-                          <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                          <span>Marcar Aplicada</span>
-                        </button>
-                        <button
-                          onClick={() => {
-                            setShowNotificationDrawer(false);
-                            handleTestDispatch7dReminder(vac);
-                          }}
-                          className="py-1 px-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-colors"
-                          title="Testar disparo do lembrete de 7 dias"
-                        >
-                          <BellRing className="w-3 h-3 text-amber-600" />
-                          <span>Testar 7d</span>
-                        </button>
-                        <button
-                          onClick={() => handleSendVaccineWhatsApp(vac)}
-                          className="py-1 px-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg text-[11px] font-semibold flex items-center gap-1 transition-colors"
-                        >
-                          <MessageCircle className="w-3 h-3" />
-                          <span>WhatsApp</span>
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-            </div>
-
-            <div className="pt-2 border-t border-slate-100 flex flex-wrap justify-between items-center gap-2 shrink-0">
-              <button
-                onClick={() => {
-                  setShowNotificationDrawer(false);
-                  setReminderModalTab('schedule');
-                  setShowReminderModal(true);
-                }}
-                className="text-xs text-amber-800 hover:text-amber-950 font-bold flex items-center gap-1 bg-amber-50 hover:bg-amber-100 px-2.5 py-1.5 rounded-lg border border-amber-300 transition-colors"
-              >
-                <CalendarClock className="w-3.5 h-3.5 text-amber-600" />
-                <span>Configurar Agenda 7 Dias</span>
-              </button>
-
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => {
-                    setShowNotificationDrawer(false);
-                    const elem = document.getElementById('agenda-preventiva');
-                    if (elem) elem.scrollIntoView({ behavior: 'smooth' });
-                  }}
-                  className="text-xs text-slate-600 hover:text-slate-900 font-semibold underline"
-                >
-                  Ver Agenda Completa
-                </button>
-                <button
-                  onClick={() => setShowNotificationDrawer(false)}
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-semibold transition-colors"
-                >
-                  Fechar
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal: Marcar Dose como Aplicada */}
-      {showApplyVaccineModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-slate-200 animate-in zoom-in-95 duration-150">
-            <div className="flex justify-between items-center pb-2 border-b border-slate-100">
-              <div>
-                <h3 className="font-bold text-sm text-slate-900 font-heading">
-                  Registrar Aplicação de Dose
-                </h3>
-                <p className="text-xs text-slate-500">{showApplyVaccineModal.name}</p>
-              </div>
-              <button
-                onClick={() => setShowApplyVaccineModal(null)}
-                className="text-slate-400 hover:text-slate-600 text-sm font-bold"
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleConfirmVaccineApplication} className="space-y-3.5 text-xs">
-              <div className="p-3 bg-slate-50 rounded-xl space-y-1 text-[11px] text-slate-600 border border-slate-100">
-                <p>
-                  <strong>Paciente:</strong> {dog.name} ({dog.breed})
-                </p>
-                <p>
-                  <strong>Fabricante:</strong> {showApplyVaccineModal.manufacturer}
-                </p>
-                <p>
-                  Ao confirmar, o sistema registrará a dose e calculará automaticamente a data do próximo reforço (365 dias para vacinas, 30 dias para antiparasitários).
-                </p>
-              </div>
-
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">
-                  Data de Aplicação (Hoje):
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={appliedDateInput}
-                  onChange={(e) => setAppliedDateInput(e.target.value)}
-                  placeholder="DD/MM/AAAA"
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono text-slate-900 outline-none focus:border-slate-900"
-                />
-              </div>
-
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">
-                  Lote do Medicamento / Selo:
-                </label>
-                <input
-                  type="text"
-                  value={appliedLotInput}
-                  onChange={(e) => setAppliedLotInput(e.target.value)}
-                  placeholder="Ex: 489112B-2026"
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono text-slate-900 outline-none focus:border-slate-900"
-                />
-              </div>
-
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">
-                  Clínica / Veterinário Responsável:
-                </label>
-                <input
-                  type="text"
-                  value={appliedClinicInput}
-                  onChange={(e) => setAppliedClinicInput(e.target.value)}
-                  placeholder="Ex: Hospital Pet Care (CRMV-SP 24.112)"
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-900 outline-none focus:border-slate-900"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setShowApplyVaccineModal(null)}
-                  className="px-4 py-2 text-slate-600 hover:text-slate-900 text-xs font-semibold"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5 shadow-xs"
-                >
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>Confirmar Aplicação</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Modal: Adicionar Nova Vacina / Profilaxia */}
-      {showAddVaccineModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-slate-200 animate-in zoom-in-95 duration-150">
-            <div className="flex justify-between items-center pb-2 border-b border-slate-100">
-              <h3 className="font-bold text-sm text-slate-900 font-heading">
-                Cadastrar Nova Imunização ou Profilaxia
-              </h3>
-              <button
-                onClick={() => setShowAddVaccineModal(false)}
-                className="text-slate-400 hover:text-slate-600 text-sm font-bold"
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleAddNewVaccineSubmit} className="space-y-3 text-xs">
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">
-                  Nome da Vacina ou Profilaxia:
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Ex: Vacina contra Giardíase Canina"
-                  value={newVacName}
-                  onChange={(e) => setNewVacName(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-900 outline-none focus:border-slate-900"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Categoria:</label>
-                  <select
-                    value={newVacCategory}
-                    onChange={(e) => setNewVacCategory(e.target.value as any)}
-                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-2 text-xs text-slate-900 outline-none focus:border-slate-900"
-                  >
-                    <option value="vacina">Vacina Canina</option>
-                    <option value="antiparasitario">Antiparasitário</option>
-                    <option value="vermifugo">Vermífugo</option>
-                    <option value="outro">Outro Tratamento</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Fabricante:</label>
-                  <input
-                    type="text"
-                    placeholder="Ex: Zoetis / MSD / Boehringer"
-                    value={newVacManufacturer}
-                    onChange={(e) => setNewVacManufacturer(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-2 text-xs text-slate-900 outline-none focus:border-slate-900"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Lote:</label>
-                  <input
-                    type="text"
-                    placeholder="Ex: G-8890"
-                    value={newVacLot}
-                    onChange={(e) => setNewVacLot(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-2 text-xs font-mono text-slate-900 outline-none focus:border-slate-900"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Última Dose:</label>
-                  <input
-                    type="text"
-                    placeholder={formattedReferenceDate}
-                    value={newVacLastDate}
-                    onChange={(e) => setNewVacLastDate(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-2 text-xs font-mono text-slate-900 outline-none focus:border-slate-900"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">
-                  Data Prevista para Próxima Dose (Reforço):
-                </label>
-                <input
-                  type="text"
-                  placeholder={getRelativeDateStr(365, referenceDate)}
-                  value={newVacNextDate}
-                  onChange={(e) => setNewVacNextDate(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono text-slate-900 outline-none focus:border-slate-900"
-                />
-              </div>
-
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">
-                  Descrição Clínica / Observações:
-                </label>
-                <input
-                  type="text"
-                  placeholder="Ex: Prevenção contra cistos de giárdia e diarréias infecciosas"
-                  value={newVacDesc}
-                  onChange={(e) => setNewVacDesc(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-900 outline-none focus:border-slate-900"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setShowAddVaccineModal(false)}
-                  className="px-4 py-2 text-slate-600 hover:text-slate-900 text-xs font-semibold"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5 shadow-xs"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Cadastrar Imunização</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-    </div>
   );
 };

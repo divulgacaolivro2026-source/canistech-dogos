@@ -4,6 +4,179 @@ const STORAGE_KEY = 'canistech_auth_user_session';
 const ACCOUNTS_STORAGE_KEY = 'canistech_accounts_registry_v3';
 const AUDIT_STORAGE_KEY = 'canistech_security_audit_logs';
 
+// =========================================================================
+// SANITIZADOR XSS & CRIPTOGRAFIA NATIVA WEB CRYPTO API (SHA-256)
+// =========================================================================
+
+/**
+ * Sanitizador contra ataques XSS (Cross-Site Scripting).
+ * Escapa estritamente <, >, &, ", ' em strings de texto livre antes de
+ * armazenar ou renderizar em tela, SVG ou PDF.
+ */
+export function sanitizeXss(input?: string | null): string {
+  if (input === null || input === undefined) return '';
+  const str = String(input);
+  // Desfaz escapes prévios para evitar dupla codificação e aplica escape estrito
+  const unescaped = str
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#x27;/g, "'")
+    .replace(/&amp;/g, '&');
+
+  return unescaped
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Sanitiza texto para exibição segura em componentes React / PDF (jsPDF),
+ * removendo tags/scripts maliciosos e escapando < e > enquanto preserva
+ * acentuação e leitura limpa em documentos oficiais.
+ */
+export function sanitizeSafeDisplay(input?: string | null): string {
+  if (input === null || input === undefined) return '';
+  const sanitized = sanitizeXss(input);
+  return sanitized
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+/**
+ * Implementação determinística síncrona FIPS 180-4 SHA-256 (produz o mesmo digest de 64 chars hex da Web Crypto API).
+ * Usada como motor síncrono imediato em conjunto com crypto.subtle.digest('SHA-256', ...).
+ */
+export function computeSha256HexSync(message: string): string {
+  const K = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+  ];
+
+  const rotr = (n: number, x: number) => (x >>> n) | (x << (32 - n));
+  const bytes = new TextEncoder().encode(message);
+  const bitLen = bytes.length * 8;
+
+  const padLen = ((bytes.length + 9 + 63) & ~63);
+  const padded = new Uint8Array(padLen);
+  padded.set(bytes);
+  padded[bytes.length] = 0x80;
+
+  const view = new DataView(padded.buffer);
+  view.setUint32(padLen - 8, Math.floor(bitLen / 0x100000000), false);
+  view.setUint32(padLen - 4, bitLen >>> 0, false);
+
+  let h0 = 0x6a09e667;
+  let h1 = 0xbb67ae85;
+  let h2 = 0x3c6ef372;
+  let h3 = 0xa54ff53a;
+  let h4 = 0x510e527f;
+  let h5 = 0x9b05688c;
+  let h6 = 0x1f83d9ab;
+  let h7 = 0x5be0cd19;
+
+  const W = new Uint32Array(64);
+
+  for (let offset = 0; offset < padLen; offset += 64) {
+    for (let i = 0; i < 16; i++) {
+      W[i] = view.getUint32(offset + i * 4, false);
+    }
+    for (let i = 16; i < 64; i++) {
+      const s0 = rotr(7, W[i - 15]) ^ rotr(18, W[i - 15]) ^ (W[i - 15] >>> 3);
+      const s1 = rotr(17, W[i - 2]) ^ rotr(19, W[i - 2]) ^ (W[i - 2] >>> 10);
+      W[i] = (W[i - 16] + s0 + W[i - 7] + s1) >>> 0;
+    }
+
+    let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7;
+
+    for (let i = 0; i < 64; i++) {
+      const S1 = rotr(6, e) ^ rotr(11, e) ^ rotr(25, e);
+      const ch = (e & f) ^ (~e & g);
+      const temp1 = (h + S1 + ch + K[i] + W[i]) >>> 0;
+      const S0 = rotr(2, a) ^ rotr(13, a) ^ rotr(22, a);
+      const maj = (a & b) ^ (a & c) ^ (b & c);
+      const temp2 = (S0 + maj) >>> 0;
+
+      h = g;
+      g = f;
+      f = e;
+      e = (d + temp1) >>> 0;
+      d = c;
+      c = b;
+      b = a;
+      a = (temp1 + temp2) >>> 0;
+    }
+
+    h0 = (h0 + a) >>> 0;
+    h1 = (h1 + b) >>> 0;
+    h2 = (h2 + c) >>> 0;
+    h3 = (h3 + d) >>> 0;
+    h4 = (h4 + e) >>> 0;
+    h5 = (h5 + f) >>> 0;
+    h6 = (h6 + g) >>> 0;
+    h7 = (h7 + h) >>> 0;
+  }
+
+  const toHex = (n: number) => (n >>> 0).toString(16).padStart(8, '0');
+  return `${toHex(h0)}${toHex(h1)}${toHex(h2)}${toHex(h3)}${toHex(h4)}${toHex(h5)}${toHex(h6)}${toHex(h7)}`;
+}
+
+/**
+ * Hashing criptográfico real via Web Crypto API nativa (crypto.subtle.digest('SHA-256', ...)).
+ * Utilizado para validação de credenciais, consentimento LGPD e assinatura de documentos oficiais.
+ */
+export async function computeSha256Hex(message: string): Promise<string> {
+  if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(message);
+    const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
+  return computeSha256HexSync(message);
+}
+
+/**
+ * Assina o Hash de Segurança da Cédula RGC ou Carteiras de Vacinação via Web Crypto API (SHA-256).
+ */
+export async function signDocumentSecurityHashAsync(
+  docType: 'RGC' | 'BOOKLET',
+  dogId: string,
+  microchip: string,
+  issuedAt: string
+): Promise<string> {
+  const payload = `${docType}::${dogId}::${microchip}::${issuedAt}::CANISTECH-SHA256-V2`;
+  const digest = await computeSha256Hex(payload);
+  const upper = digest.toUpperCase();
+  const prefix = docType === 'RGC' ? 'SEC-CT' : 'VAC-CT';
+  return `${prefix}-${upper.slice(0, 4)}-${upper.slice(4, 8)}-${upper.slice(8, 12)}`;
+}
+
+/**
+ * Versão síncrona SHA-256 para renderização imediata em tela/PDF (produz o mesmo hash SHA-256).
+ */
+export function signDocumentSecurityHashSync(
+  docType: 'RGC' | 'BOOKLET',
+  dogId: string,
+  microchip: string,
+  issuedAt: string
+): string {
+  const payload = `${docType}::${dogId}::${microchip}::${issuedAt}::CANISTECH-SHA256-V2`;
+  const digest = computeSha256HexSync(payload).toUpperCase();
+  const prefix = docType === 'RGC' ? 'SEC-CT' : 'VAC-CT';
+  return `${prefix}-${digest.slice(0, 4)}-${digest.slice(4, 8)}-${digest.slice(8, 12)}`;
+}
+
 /**
  * Contas estritas com privilégios de Administrador Sênior
  */
@@ -255,22 +428,42 @@ export function getCurrentUser(): AuthUser | null {
 }
 
 /**
- * Salva a sessão autenticada no localStorage e registra auditoria
+ * Salva a sessão autenticada no localStorage com assinatura SHA-256 (Web Crypto API) e registra auditoria
  */
 export function saveUserSession(user: AuthUser): void {
   try {
-    if (isSeniorAdmin(user.email)) {
-      user.role = 'admin';
-    }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
-    recordUserLogin(user);
+    const safeUser: AuthUser = {
+      ...user,
+      name: sanitizeSafeDisplay(user.name),
+      email: sanitizeSafeDisplay(user.email).trim(),
+      role: isSeniorAdmin(user.email) ? 'admin' : user.role,
+      accessToken: computeSha256HexSync(`${user.email}::${user.provider}::${user.lastLoginAt}::SESSION`),
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(safeUser));
+    recordUserLogin(safeUser);
+
+    // Assinatura assíncrona via Web Crypto API nativa (crypto.subtle.digest('SHA-256', ...))
+    void computeSha256Hex(`${safeUser.email}::${safeUser.provider}::${safeUser.lastLoginAt}::SESSION`).then(
+      (digest) => {
+        try {
+          const current = getCurrentUser();
+          if (current && current.email.toLowerCase() === safeUser.email.toLowerCase()) {
+            current.accessToken = `sha256:${digest}`;
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(current));
+          }
+        } catch {
+          // fallback silencioso
+        }
+      }
+    );
+
     logAuditEvent({
-      userEmail: user.email,
+      userEmail: safeUser.email,
       action: 'AUTH_SESSION_ESTABLISHED',
-      provider: user.provider,
+      provider: safeUser.provider,
       ipMock: '189.40.112.45 (CanisTech Network)',
       status: 'SUCCESS',
-      details: `Sessão iniciada via ${user.provider.toUpperCase()} (${user.role === 'admin' ? 'Sênior Admin' : 'Tutor'})`,
+      details: `Sessão iniciada via ${safeUser.provider.toUpperCase()} com hash SHA-256 (${safeUser.role === 'admin' ? 'Sênior Admin' : 'Tutor'})`,
     });
   } catch (e) {
     console.error('Erro ao salvar sessão de usuário:', e);
@@ -300,7 +493,7 @@ export function clearUserSession(): void {
 }
 
 /**
- * Autentica o usuário via Google com controle de privilégios sênior
+ * Autentica o usuário via Google com controle de privilégios sênior e hash SHA-256
  */
 export function loginWithGoogle(params?: {
   name?: string;
@@ -308,19 +501,20 @@ export function loginWithGoogle(params?: {
   photoUrl?: string;
 }): AuthUser {
   const account = DEFAULT_GOOGLE_ACCOUNTS[0];
-  const email = params?.email || account.email;
+  const email = sanitizeSafeDisplay(params?.email || account.email).trim();
   const isSenior = isSeniorAdmin(email);
+  const nowIso = new Date().toISOString();
 
   const user: AuthUser = {
     id: `usr-google-${Date.now()}`,
-    name: params?.name || account.name,
+    name: sanitizeSafeDisplay(params?.name || account.name),
     email: email,
     photoUrl: params?.photoUrl || account.photoUrl,
     provider: 'google',
     role: isSenior ? 'admin' : 'tutor',
-    createdAt: new Date().toISOString(),
-    lastLoginAt: new Date().toISOString(),
-    accessToken: `ya29.canistech-shielded-token-${Math.random().toString(36).substring(2, 12)}`,
+    createdAt: nowIso,
+    lastLoginAt: nowIso,
+    accessToken: `sha256:${computeSha256HexSync(`google::${email}::${nowIso}`)}`,
   };
 
   saveUserSession(user);
@@ -328,7 +522,7 @@ export function loginWithGoogle(params?: {
 }
 
 /**
- * Autentica o usuário via Facebook com controle de privilégios sênior
+ * Autentica o usuário via Facebook com controle de privilégios sênior e hash SHA-256
  */
 export function loginWithFacebook(params?: {
   name?: string;
@@ -336,19 +530,20 @@ export function loginWithFacebook(params?: {
   photoUrl?: string;
 }): AuthUser {
   const account = DEFAULT_FACEBOOK_ACCOUNTS[0];
-  const email = params?.email || account.email;
+  const email = sanitizeSafeDisplay(params?.email || account.email).trim();
   const isSenior = isSeniorAdmin(email);
+  const nowIso = new Date().toISOString();
 
   const user: AuthUser = {
     id: `usr-fb-${Date.now()}`,
-    name: params?.name || account.name,
+    name: sanitizeSafeDisplay(params?.name || account.name),
     email: email,
     photoUrl: params?.photoUrl || account.photoUrl,
     provider: 'facebook',
     role: isSenior ? 'admin' : 'tutor',
-    createdAt: new Date().toISOString(),
-    lastLoginAt: new Date().toISOString(),
-    accessToken: `EAAB.canistech-shielded-token-${Math.random().toString(36).substring(2, 12)}`,
+    createdAt: nowIso,
+    lastLoginAt: nowIso,
+    accessToken: `sha256:${computeSha256HexSync(`facebook::${email}::${nowIso}`)}`,
   };
 
   saveUserSession(user);

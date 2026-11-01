@@ -368,7 +368,7 @@ export const DogTrainingGuideView: React.FC<DogTrainingGuideViewProps> = ({
         currentUser.name,
         donationAmount
       );
-      const pwd = typeof result === 'string' ? result : result.accessPassword;
+      const pwd = typeof result === 'string' ? result : (result.accessPassword || '');
       setGeneratedPassword(pwd);
       setInputPassword(pwd);
       setGoldStatus(getUserGoldStatus(currentUser.email));

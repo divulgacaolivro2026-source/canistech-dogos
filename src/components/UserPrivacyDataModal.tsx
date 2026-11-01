@@ -3,18 +3,21 @@ import { AuthUser } from '../types';
 import {
   exportAllUserDataJson,
   purgeAllUserDataFromPlatform,
+  getLgpdConsent,
+  DPO_CONTACT_INFO,
+  LGPD_POLICY_VERSION,
 } from '../services/goldAndPrivacyService';
 import { isSeniorAdmin } from '../services/authService';
 import {
   ShieldCheck,
   Download,
   Trash2,
-  AlertTriangle,
   X,
-  FileText,
   Lock,
   CheckCircle2,
   HardDrive,
+  Mail,
+  FileCheck,
 } from 'lucide-react';
 
 export interface UserPrivacyDataModalProps {
@@ -37,6 +40,7 @@ export const UserPrivacyDataModal: React.FC<UserPrivacyDataModalProps> = ({
   if (!isOpen || !currentUser) return null;
 
   const isSenior = isSeniorAdmin(currentUser.email);
+  const consentRecord = getLgpdConsent(currentUser.email);
   const requiredPhrase = 'EXCLUIR MEUS DADOS';
   const isMatch = confirmationInput.trim() === requiredPhrase;
 
@@ -124,11 +128,43 @@ export const UserPrivacyDataModal: React.FC<UserPrivacyDataModalProps> = ({
           </button>
         </div>
 
-        {/* Informação do Cofre Local */}
-        <div className="p-3.5 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-100 dark:border-slate-800 flex items-start gap-3 text-xs">
-          <HardDrive className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
-          <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
-            Seus prontuários, vacinas e pesagens são gravados na partição <code className="bg-slate-200 dark:bg-slate-700 px-1 py-0.2 rounded font-mono text-[11px]">canistech_vault_{currentUser.email}</code>. Nenhum dado biométrico é compartilhado com terceiros ou corretoras.
+        {/* Informação do Cofre Local e Registro de Consentimento LGPD */}
+        <div className="p-3.5 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-2 text-xs">
+          <div className="flex items-start gap-3">
+            <HardDrive className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
+            <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
+              Seus prontuários, vacinas e pesagens são gravados na partição <code className="bg-slate-200 dark:bg-slate-700 px-1 py-0.2 rounded font-mono text-[11px]">canistech_vault_{currentUser.email}</code>. Nenhum dado biométrico é compartilhado com terceiros ou corretoras.
+            </p>
+          </div>
+          {consentRecord && (
+            <div className="pt-2 border-t border-slate-200/70 dark:border-slate-700/70 flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono text-emerald-700 dark:text-emerald-400">
+              <span className="flex items-center gap-1 font-bold">
+                <FileCheck className="w-3.5 h-3.5" />
+                Consentimento Ativo ({consentRecord.policyVersion || LGPD_POLICY_VERSION})
+              </span>
+              <span>Hash: {consentRecord.consentHash}</span>
+              <span>Aceite: {new Date(consentRecord.timestamp).toLocaleString('pt-BR')}</span>
+            </div>
+          )}
+        </div>
+
+        {/* CANAL OFICIAL DO ENCARREGADO DE DADOS (DPO - ART. 41 LGPD) */}
+        <div className="p-4 rounded-2xl bg-emerald-50/60 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 space-y-2 text-xs">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 font-bold text-emerald-900 dark:text-emerald-300">
+              <Mail className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>Canal Oficial do Encarregado de Proteção de Dados (DPO • Art. 41 LGPD)</span>
+            </div>
+            <a
+              href={`mailto:${DPO_CONTACT_INFO.dpoEmail}?subject=${encodeURIComponent(`Requisição LGPD - Titular ${currentUser.email}`)}`}
+              className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition-colors shrink-0"
+            >
+              Contatar DPO
+            </a>
+          </div>
+          <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
+            <strong>Encarregado:</strong> {DPO_CONTACT_INFO.dpoName} ({DPO_CONTACT_INFO.dpoEmail})<br />
+            <strong>Base Legal:</strong> {DPO_CONTACT_INFO.legalBasis}
           </p>
         </div>
 

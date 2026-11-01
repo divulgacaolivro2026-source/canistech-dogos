@@ -50,7 +50,14 @@ import { CanineEventsScheduleModal } from './components/CanineEventsScheduleModa
 import { IntellectualPropertyAndPortfolioView } from './components/IntellectualPropertyAndPortfolioView';
 import { DogTrainingGuideView } from './components/DogTrainingGuideView';
 import { UserPrivacyDataModal } from './components/UserPrivacyDataModal';
-import { Calendar, Lock, ShieldCheck } from 'lucide-react';
+import { LgpdConsentBanner } from './components/LgpdConsentBanner';
+import { VaccinationPage } from './components/VaccinationPage';
+import {
+  syncDogProfileDualMode,
+  syncVaccineRecordDualMode,
+  syncVaultWithSupabaseDualMode,
+} from './services/supabaseClient';
+import { Calendar, Lock, ShieldCheck, Syringe } from 'lucide-react';
 
 interface UserVaultData {
   dogs: DogProfile[];
@@ -177,14 +184,92 @@ export default function App() {
   const [contestCandidates, setContestCandidates] = useState<ContestCandidate[]>(CONTEST_CANDIDATES);
   const [campaigns, setCampaigns] = useState<AdCampaign[]>(INITIAL_AD_CAMPAIGNS);
 
-  // Modals
+  // Modals & Dog Edition State
   const [showRegisterDogModal, setShowRegisterDogModal] = useState<boolean>(false);
+  const [editingDog, setEditingDog] = useState<DogProfile | null>(null);
   const [showVetChatModal, setShowVetChatModal] = useState<boolean>(false);
   const [showEventsScheduleModal, setShowEventsScheduleModal] = useState<boolean>(false);
   const [vetChatInitialQuery, setVetChatInitialQuery] = useState<string | undefined>(undefined);
   const [showArchitectureDoc, setShowArchitectureDoc] = useState<boolean>(false);
   const [selectedBreedForDetail, setSelectedBreedForDetail] = useState<BreedInfo | null>(null);
   const [showPrivacyModal, setShowPrivacyModal] = useState<boolean>(false);
+
+  // Protected Emergency Scan Routing State
+  const [emergencyScanNotice, setEmergencyScanNotice] = useState<string | null>(null);
+  const [pendingScanTarget, setPendingScanTarget] = useState<{ dogId?: string | null; rgc?: string | null } | null>(null);
+
+  // Processamento de URL: Roteamento Protegido do Scan de Emergência (Dossiê com Login Obrigatório)
+  useEffect(() => {
+    try {
+      const searchParams = new URLSearchParams(window.location.search);
+      const viewParam = searchParams.get('view');
+      const dogIdParam = searchParams.get('dogId');
+      const rgcParam = searchParams.get('rgc');
+      const actionParam = searchParams.get('action');
+
+      if (viewParam === 'dossier' || actionParam === 'emergency_scan') {
+        if (!currentUser) {
+          setEmergencyScanNotice(
+            'Acesso Restrito: Faça login como proprietário titular para visualizar o Dossiê Biométrico de Emergência deste animal.'
+          );
+          setPendingScanTarget({ dogId: dogIdParam, rgc: rgcParam });
+        } else {
+          // Usuário já está autenticado no momento do scan
+          handleProcessEmergencyAccess(currentUser, dogIdParam, rgcParam);
+        }
+      }
+    } catch (e) {
+      console.error('Erro ao processar parâmetros de emergência:', e);
+    }
+  }, []);
+
+  const handleProcessEmergencyAccess = (
+    user: AuthUser,
+    targetDogId?: string | null,
+    targetRgc?: string | null
+  ) => {
+    const v = loadUserVault(user.email, user);
+    const matchedDog =
+      v.dogs.find(
+        (d) =>
+          (targetDogId && d.id === targetDogId) ||
+          (targetRgc && (d.rgNumber === targetRgc || d.rgcNumber === targetRgc))
+      ) || v.dogs[0];
+
+    if (matchedDog) {
+      const isOwner =
+        !matchedDog.tutorEmail ||
+        matchedDog.tutorEmail.toLowerCase() === user.email.toLowerCase() ||
+        (matchedDog as any).ownerEmail?.toLowerCase() === user.email.toLowerCase();
+      const isAdmin = isSeniorAdmin(user.email);
+
+      if (isOwner || isAdmin) {
+        setActiveDogId(matchedDog.id);
+        setCurrentView('clinicReport');
+        try {
+          window.history.replaceState({}, document.title, window.location.pathname);
+        } catch {}
+      } else {
+        alert(
+          'Acesso Negado: Apenas o tutor cadastrado ou o Administrador Sênior possui autorização para consultar este Dossiê de Emergência.'
+        );
+        setCurrentView('dashboard');
+      }
+    } else {
+      setCurrentView('clinicReport');
+    }
+  };
+
+  // REGRA DE ENCERRAMENTO POR ÓBITO: Se todos os cães forem falecidos, aciona obrigatoriamente o cadastro
+  useEffect(() => {
+    if (currentUser) {
+      const aliveDogs = dogs.filter((d) => (d.vitalStatus ?? 'alive') === 'alive');
+      if (dogs.length > 0 && aliveDogs.length === 0) {
+        setEditingDog(null);
+        setShowRegisterDogModal(true);
+      }
+    }
+  }, [currentUser, dogs]);
 
   // Recarrega o cofre seguro sempre que o usuário alternar de conta
   useEffect(() => {
@@ -195,6 +280,9 @@ export default function App() {
       setWeightHistory(v.weightHistory);
       setVaccines(v.vaccines);
       setActivityHistory(v.activityHistory);
+
+      // Sincronização transparente Dual-Mode (Supabase Cloud quando configurado, ou Local Vault)
+      void syncVaultWithSupabaseDualMode(v.dogs, v.vaccines, currentUser.id, currentUser.token);
 
       // BLINDAGEM: Se tentar entrar na view admin ou portfolio sem ser Administrador Sênior, redireciona
       if ((currentView === 'admin' || currentView === 'portfolio') && !isSeniorAdmin(currentUser.email)) {
@@ -212,6 +300,18 @@ export default function App() {
   }, [currentUser, currentView]);
 
   const activeDog = dogs.find((d) => d.id === activeDogId) || dogs[0] || null;
+
+  // Contagem dinâmica de vacinas urgentes (a vencer em <= 7 dias ou vencidas)
+  const urgentVaccinesCount = React.useMemo(() => {
+    if (!activeDog) return 0;
+    const dogVacs = vaccines.filter((v) => !v.dogId || v.dogId === activeDog.id);
+    const targetVacs = dogVacs.length > 0 ? dogVacs : vaccines;
+    return targetVacs.filter((v) => {
+      if (v.status === 'expired' || v.status === 'warning') return true;
+      if (v.daysRemaining !== undefined && v.daysRemaining <= 7) return true;
+      return false;
+    }).length;
+  }, [vaccines, activeDog]);
 
   const persistCurrentVault = (overrides?: Partial<UserVaultData>) => {
     if (!currentUser) return;
@@ -234,6 +334,41 @@ export default function App() {
   const handleSwitchAccount = () => {
     clearUserSession();
     setCurrentUser(null);
+  };
+
+  const handleLoginSuccess = (user: AuthUser) => {
+    setCurrentUser(user);
+    if (pendingScanTarget) {
+      handleProcessEmergencyAccess(user, pendingScanTarget.dogId, pendingScanTarget.rgc);
+      setPendingScanTarget(null);
+      setEmergencyScanNotice(null);
+    }
+  };
+
+  // Handler: Update existing dog profile (com ciclo de vida e encerramento por óbito)
+  const handleUpdateDog = (updatedDog: DogProfile) => {
+    const updatedDogs = dogs.map((d) => (d.id === updatedDog.id ? updatedDog : d));
+    setDogs(updatedDogs);
+
+    const aliveDogs = updatedDogs.filter((d) => (d.vitalStatus ?? 'alive') === 'alive');
+    let nextActiveId = activeDogId;
+
+    if (updatedDog.vitalStatus === 'deceased') {
+      if (aliveDogs.length > 0) {
+        nextActiveId = aliveDogs[0].id;
+        setActiveDogId(nextActiveId);
+      } else {
+        // Bloqueio obrigatório: obriga cadastro de novo cão ativo
+        setEditingDog(null);
+        setShowRegisterDogModal(true);
+      }
+    }
+
+    persistCurrentVault({
+      dogs: updatedDogs,
+      activeDogId: nextActiveId,
+    });
+    void syncDogProfileDualMode(updatedDog, currentUser?.id, currentUser?.token);
   };
 
   // Handler: Add new weigh-in
@@ -268,6 +403,7 @@ export default function App() {
       dogs: updatedDogs,
       activeDogId: newDog.id,
     });
+    void syncDogProfileDualMode(newDog, currentUser?.id, currentUser?.token);
   };
 
   // Handler: Vote in Dog of the Week contest
@@ -305,6 +441,7 @@ export default function App() {
     const updated = vaccines.map((v) => (v.id === updatedVaccine.id ? updatedVaccine : v));
     setVaccines(updated);
     persistCurrentVault({ vaccines: updated });
+    void syncVaccineRecordDualMode(updatedVaccine, currentUser?.id, currentUser?.token);
   };
 
   // Handler: Add new vaccine record
@@ -312,6 +449,7 @@ export default function App() {
     const updated = [newVaccine, ...vaccines];
     setVaccines(updated);
     persistCurrentVault({ vaccines: updated });
+    void syncVaccineRecordDualMode(newVaccine, currentUser?.id, currentUser?.token);
   };
 
   // Handler: Add daily exercise / activity record
@@ -330,11 +468,21 @@ export default function App() {
 
   // STRICT GATE: Só poderá entrar na plataforma através do login via Google ou Facebook
   if (!currentUser) {
-    return <LoginScreen onLoginSuccess={(user) => setCurrentUser(user)} />;
+    return (
+      <>
+        <LgpdConsentBanner userEmail={undefined} />
+        <LoginScreen
+          onLoginSuccess={handleLoginSuccess}
+          emergencyScanNotice={emergencyScanNotice}
+        />
+      </>
+    );
   }
 
   return (
     <div className="min-h-screen bg-[#F8F9FA] dark:bg-[#090D16] text-[#0B1C30] dark:text-[#F1F5F9] flex flex-col font-sans transition-colors duration-200">
+      {/* Gate Obrigatório de Consentimento LGPD no Primeiro Acesso */}
+      <LgpdConsentBanner userEmail={currentUser.email} />
       {/* Top Navbar */}
       <Navbar
         currentView={currentView}
@@ -358,7 +506,10 @@ export default function App() {
         dogs={dogs}
         activeDog={activeDog}
         onSelectDog={handleSelectDog}
-        onOpenRegisterDog={() => setShowRegisterDogModal(true)}
+        onOpenRegisterDog={() => {
+          setEditingDog(null);
+          setShowRegisterDogModal(true);
+        }}
         onOpenVetChat={() => handleOpenVetChat()}
         onOpenArchitectureDoc={() => setShowArchitectureDoc(true)}
         currentUser={currentUser}
@@ -368,6 +519,7 @@ export default function App() {
         onToggleDarkMode={toggleTheme}
         onOpenEventsSchedule={() => setShowEventsScheduleModal(true)}
         onOpenPrivacyModal={() => setShowPrivacyModal(true)}
+        urgentVaccinesCount={urgentVaccinesCount}
       />
 
       {/* Main Viewport Container */}
@@ -379,7 +531,15 @@ export default function App() {
             weightHistory={weightHistory}
             vaccines={vaccines}
             activityHistory={activityHistory}
-            onOpenRegisterDog={() => setShowRegisterDogModal(true)}
+            onOpenRegisterDog={() => {
+              setEditingDog(null);
+              setShowRegisterDogModal(true);
+            }}
+            onOpenEditDog={(dogToModify) => {
+              setEditingDog(dogToModify);
+              setShowRegisterDogModal(true);
+            }}
+            onUpdateDog={handleUpdateDog}
             onAddWeight={handleAddWeight}
             onAddActivity={handleAddActivity}
             onUpdateVaccine={handleUpdateVaccine}
@@ -387,6 +547,10 @@ export default function App() {
             onNavigateToReport={() => setCurrentView('clinicReport')}
             onNavigateToToxicity={() => setCurrentView('toxicidade')}
             onOpenVetChat={handleOpenVetChat}
+            onNavigateToVaccines={() => {
+              setCurrentView('vacinas');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
             onNavigateToDonation={() => {
               setCurrentView('doacao');
               window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -395,6 +559,26 @@ export default function App() {
               setCurrentView('enciclopedia');
               window.scrollTo({ top: 0, behavior: 'smooth' });
             }}
+          />
+        )}
+
+        {currentView === 'vacinas' && (
+          <VaccinationPage
+            activeDog={activeDog}
+            dogs={dogs}
+            vaccines={vaccines}
+            onUpdateVaccine={handleUpdateVaccine}
+            onAddVaccine={handleAddVaccine}
+            onNavigateToDashboard={() => {
+              setCurrentView('dashboard');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+            onOpenRegisterDog={() => {
+              setEditingDog(null);
+              setShowRegisterDogModal(true);
+            }}
+            onOpenVetChat={handleOpenVetChat}
+            currentUser={currentUser}
           />
         )}
 
@@ -410,7 +594,10 @@ export default function App() {
               <h2 className="text-xl font-bold text-slate-800 dark:text-white">Nenhum cão cadastrado</h2>
               <p className="text-xs text-slate-500">Cadastre um cão no DogOS para visualizar e emitir seu relatório completo.</p>
               <button
-                onClick={() => setShowRegisterDogModal(true)}
+                onClick={() => {
+                  setEditingDog(null);
+                  setShowRegisterDogModal(true);
+                }}
                 className="px-5 py-2.5 bg-orange-600 hover:bg-orange-500 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer"
               >
                 + Cadastrar Cão
@@ -464,7 +651,10 @@ export default function App() {
           <BrazilCanineMap
             regionStats={REGION_GEO_STATS}
             dogs={dogs}
-            onOpenRegisterDog={() => setShowRegisterDogModal(true)}
+            onOpenRegisterDog={() => {
+              setEditingDog(null);
+              setShowRegisterDogModal(true);
+            }}
           />
         )}
 
@@ -621,9 +811,25 @@ export default function App() {
       {/* Global Modals */}
       {showRegisterDogModal && (
         <DogRegistrationModal
-          onClose={() => setShowRegisterDogModal(false)}
-          onSaveDog={handleSaveDog}
+          onClose={() => {
+            const aliveCount = dogs.filter((d) => (d.vitalStatus ?? 'alive') === 'alive').length;
+            if (aliveCount === 0 && dogs.length > 0) return;
+            setShowRegisterDogModal(false);
+            setEditingDog(null);
+          }}
+          onSaveDog={(newDog) => {
+            handleSaveDog(newDog);
+            setShowRegisterDogModal(false);
+            setEditingDog(null);
+          }}
+          onUpdateDog={(updatedDog) => {
+            handleUpdateDog(updatedDog);
+            setShowRegisterDogModal(false);
+            setEditingDog(null);
+          }}
+          dogToEdit={editingDog}
           currentUser={currentUser}
+          isBlockingRequired={dogs.length > 0 && dogs.filter((d) => (d.vitalStatus ?? 'alive') === 'alive').length === 0}
         />
       )}
 
@@ -679,6 +885,12 @@ export default function App() {
                 <li>
                   <button onClick={() => { setCurrentView('dashboard'); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="hover:text-white transition-colors">
                     Meu Cão (DogOS)
+                  </button>
+                </li>
+                <li>
+                  <button onClick={() => { setCurrentView('vacinas'); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="hover:text-white transition-colors text-emerald-400 font-semibold flex items-center gap-1.5">
+                    <Syringe className="w-3.5 h-3.5" />
+                    <span>Vacinas & Imunização (WSAVA)</span>
                   </button>
                 </li>
                 <li>

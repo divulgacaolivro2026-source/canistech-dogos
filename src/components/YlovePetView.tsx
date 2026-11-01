@@ -1,17 +1,14 @@
-import React, { useState } from 'react';
-import { YloveCandidate, DogProfile } from '../types';
+import React, { useState, useMemo } from 'react';
+import { YloveCandidate, DogProfile, DogPedigree, PedigreeAncestor } from '../types';
+import { sanitizeXss } from '../services/authService';
 import {
   ShieldCheck,
   Dna,
-  Heart,
   FileCheck,
   Award,
-  Sparkles,
   Search,
   CheckCircle2,
   AlertCircle,
-  ExternalLink,
-  ChevronRight,
   BookOpen,
   MessageSquare,
 } from 'lucide-react';
@@ -20,6 +17,198 @@ interface YlovePetViewProps {
   candidates: YloveCandidate[];
   activeDog?: DogProfile | null;
   onRequestBreedMatch: (candidateName: string) => void;
+}
+
+interface AncestorNode {
+  key: string;
+  label: string;
+  n: number; // Passos geracionais a partir do genitor (0 = próprio genitor, 1 = avô/avó, 2 = bisavô/bisavó)
+  fA: number; // Coeficiente de endogamia do ancestral comum F_A
+}
+
+function normalizeAncestorKey(anc?: PedigreeAncestor | null): string {
+  if (!anc || !anc.name || !anc.name.trim()) return '';
+  if (anc.regNumber && anc.regNumber.trim()) {
+    return `REG:${anc.regNumber.trim().toUpperCase().replace(/\s+/g, '')}`;
+  }
+  return `NAME:${anc.name.trim().toLowerCase().replace(/\s+/g, ' ')}`;
+}
+
+/**
+ * Verifica se a Árvore Genealógica de 3 Gerações do exemplar possui dados preenchidos
+ */
+export function hasThreeGenerationPedigree(ped?: DogPedigree | null): boolean {
+  if (!ped) return false;
+  const hasParents = Boolean(ped.father?.name?.trim() && ped.mother?.name?.trim());
+  const hasGrandparents = Boolean(
+    ped.paternalGrandfather?.name?.trim() ||
+      ped.paternalGrandmother?.name?.trim() ||
+      ped.maternalGrandfather?.name?.trim() ||
+      ped.maternalGrandmother?.name?.trim()
+  );
+  return hasParents && hasGrandparents;
+}
+
+/**
+ * Extrai a linhagem de 3 gerações de um indivíduo ou ramo parental com distâncias geracionais (n)
+ */
+function extractLineageNodes(ped: DogPedigree, side: 'paternal' | 'maternal'): AncestorNode[] {
+  const nodes: AncestorNode[] = [];
+  const addNode = (anc: PedigreeAncestor | undefined, n: number, fA = 0) => {
+    const key = normalizeAncestorKey(anc);
+    if (key && anc) {
+      nodes.push({
+        key,
+        label: anc.regNumber ? `${anc.name.trim()} (${anc.regNumber.trim()})` : anc.name.trim(),
+        n,
+        fA,
+      });
+    }
+  };
+
+  if (side === 'paternal') {
+    // Verifica se o próprio Pai possui endogamia entre seus avós (bisavós do cão)
+    const patGF1 = normalizeAncestorKey(ped.paternalGGF1);
+    const patGF2 = normalizeAncestorKey(ped.paternalGGF2);
+    const patGM1 = normalizeAncestorKey(ped.paternalGGM1);
+    const patGM2 = normalizeAncestorKey(ped.paternalGGM2);
+    const fatherFa =
+      (patGF1 && (patGF1 === patGF2 || patGF1 === patGM2) ? 0.125 : 0) +
+      (patGM1 && (patGM1 === patGF2 || patGM1 === patGM2) ? 0.125 : 0);
+
+    addNode(ped.father, 0, fatherFa);
+    addNode(ped.paternalGrandfather, 1, 0);
+    addNode(ped.paternalGrandmother, 1, 0);
+    addNode(ped.paternalGGF1, 2, 0);
+    addNode(ped.paternalGGM1, 2, 0);
+    addNode(ped.paternalGGF2, 2, 0);
+    addNode(ped.paternalGGM2, 2, 0);
+  } else {
+    const matGF1 = normalizeAncestorKey(ped.maternalGGF1);
+    const matGF2 = normalizeAncestorKey(ped.maternalGGF2);
+    const matGM1 = normalizeAncestorKey(ped.maternalGGM1);
+    const matGM2 = normalizeAncestorKey(ped.maternalGGM2);
+    const motherFa =
+      (matGF1 && (matGF1 === matGF2 || matGF1 === matGM2) ? 0.125 : 0) +
+      (matGM1 && (matGM1 === matGF2 || matGM1 === matGM2) ? 0.125 : 0);
+
+    addNode(ped.mother, 0, motherFa);
+    addNode(ped.maternalGrandfather, 1, 0);
+    addNode(ped.maternalGrandmother, 1, 0);
+    addNode(ped.maternalGGF1, 2, 0);
+    addNode(ped.maternalGGM1, 2, 0);
+    addNode(ped.maternalGGF2, 2, 0);
+    addNode(ped.maternalGGM2, 2, 0);
+  }
+
+  return nodes;
+}
+
+/**
+ * Cálculo Determinístico Real do Coeficiente de Consanguinidade de Wright (COI):
+ * Fórmula Científica: F_X = \sum (0.5)^{n_1 + n_2 + 1} * (1 + F_A)
+ * Analisa os ancestrais comuns cadastrados no pedigree de 3 gerações (Pais, Avós e Bisavós),
+ * tanto do próprio exemplar quanto no cruzamento simulado com um reprodutor/matriz.
+ */
+export function calculateDeterministicWrightCoi(
+  dogPedigree: DogPedigree,
+  matePedigree?: DogPedigree | null
+): {
+  coiPercentage: number;
+  commonAncestors: string[];
+  formulaSteps: string[];
+} {
+  let line1Nodes: AncestorNode[] = [];
+  let line2Nodes: AncestorNode[] = [];
+
+  if (matePedigree && hasThreeGenerationPedigree(matePedigree)) {
+    // Cruzamento entre o cão titular (Genitor 1) e o candidato selecionado (Genitor 2):
+    // Pais do cão titular estão a n1 = 1 do filhote simulado, Avós a n1 = 2, Bisavós a n1 = 3
+    const dogPaternal = extractLineageNodes(dogPedigree, 'paternal').map((node) => ({
+      ...node,
+      n: node.n + 1,
+    }));
+    const dogMaternal = extractLineageNodes(dogPedigree, 'maternal').map((node) => ({
+      ...node,
+      n: node.n + 1,
+    }));
+    line1Nodes = [...dogPaternal, ...dogMaternal];
+
+    const matePaternal = extractLineageNodes(matePedigree, 'paternal').map((node) => ({
+      ...node,
+      n: node.n + 1,
+    }));
+    const mateMaternal = extractLineageNodes(matePedigree, 'maternal').map((node) => ({
+      ...node,
+      n: node.n + 1,
+    }));
+    line2Nodes = [...matePaternal, ...mateMaternal];
+  } else {
+    // COI intrínseco do exemplar titular (Linhagem Paterna n1 vs Linhagem Materna n2)
+    line1Nodes = extractLineageNodes(dogPedigree, 'paternal');
+    line2Nodes = extractLineageNodes(dogPedigree, 'maternal');
+  }
+
+  let fx = 0;
+  const commonAncestorsSet = new Set<string>();
+  const formulaSteps: string[] = [];
+  const processedPairs = new Set<string>();
+
+  for (const pNode of line1Nodes) {
+    for (const mNode of line2Nodes) {
+      if (pNode.key === mNode.key) {
+        const pairId = `${pNode.key}::${pNode.n}::${mNode.n}`;
+        if (processedPairs.has(pairId)) continue;
+        processedPairs.add(pairId);
+
+        const n1 = pNode.n;
+        const n2 = mNode.n;
+        const fA = Math.max(pNode.fA, mNode.fA);
+        const pathContribution = Math.pow(0.5, n1 + n2 + 1) * (1 + fA);
+        fx += pathContribution;
+        commonAncestorsSet.add(pNode.label);
+        formulaSteps.push(
+          `${pNode.label}: (0.5)^(${n1}+${n2}+1) × (1+${fA}) = ${(pathContribution * 100).toFixed(2)}%`
+        );
+      }
+    }
+  }
+
+  // Caso não haja cruzamento com candidato mas o próprio exemplar tenha COI intrínseco somado ao candidato
+  if (
+    fx === 0 &&
+    matePedigree &&
+    hasThreeGenerationPedigree(dogPedigree)
+  ) {
+    // Verifica também a endogamia intrínseca da árvore do próprio cão titular
+    const selfPaternal = extractLineageNodes(dogPedigree, 'paternal');
+    const selfMaternal = extractLineageNodes(dogPedigree, 'maternal');
+    for (const pNode of selfPaternal) {
+      for (const mNode of selfMaternal) {
+        if (pNode.key === mNode.key) {
+          const pairId = `SELF::${pNode.key}::${pNode.n}::${mNode.n}`;
+          if (processedPairs.has(pairId)) continue;
+          processedPairs.add(pairId);
+          const n1 = pNode.n;
+          const n2 = mNode.n;
+          const fA = Math.max(pNode.fA, mNode.fA);
+          const pathContribution = Math.pow(0.5, n1 + n2 + 1) * (1 + fA);
+          fx += pathContribution;
+          commonAncestorsSet.add(pNode.label);
+          formulaSteps.push(
+            `${pNode.label} (Árvore do Exemplar): (0.5)^(${n1}+${n2}+1) × (1+${fA}) = ${(pathContribution * 100).toFixed(2)}%`
+          );
+        }
+      }
+    }
+  }
+
+  const coiPercentage = Number((fx * 100).toFixed(2));
+  return {
+    coiPercentage,
+    commonAncestors: Array.from(commonAncestorsSet),
+    formulaSteps,
+  };
 }
 
 export const YlovePetView: React.FC<YlovePetViewProps> = ({
@@ -37,10 +226,26 @@ export const YlovePetView: React.FC<YlovePetViewProps> = ({
   const [selectedCandidate, setSelectedCandidate] = useState<YloveCandidate | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
 
-  // Inbreeding Calculator Simulator State
-  const [coiMother, setCoiMother] = useState<string>('Linhagem A (Avós sem parentesco)');
-  const [coiFather, setCoiFather] = useState<string>('Linhagem B (Avós sem parentesco)');
-  const [simulatedCoi, setSimulatedCoi] = useState<number>(1.8);
+  // Inbreeding Calculator Simulator State (100% Determinístico — Wright's Formula)
+  const [selectedMateId, setSelectedMateId] = useState<string>(candidates[0]?.id || 'ylove-1');
+  const [contactMessage, setContactMessage] = useState<string>('');
+
+  const dogHasPedigree = useMemo(
+    () => hasThreeGenerationPedigree(activeDog?.pedigree),
+    [activeDog?.pedigree]
+  );
+
+  const selectedMate = useMemo(
+    () => candidates.find((c) => c.id === selectedMateId) || candidates[0] || null,
+    [candidates, selectedMateId]
+  );
+
+  const deterministicCoiResult = useMemo(() => {
+    if (!activeDog?.pedigree || !dogHasPedigree) {
+      return null;
+    }
+    return calculateDeterministicWrightCoi(activeDog.pedigree, selectedMate?.pedigree || null);
+  }, [activeDog?.pedigree, dogHasPedigree, selectedMate?.pedigree]);
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
@@ -56,20 +261,30 @@ export const YlovePetView: React.FC<YlovePetViewProps> = ({
 
   const handleOpenContact = (candidate: YloveCandidate) => {
     setSelectedCandidate(candidate);
+    setContactMessage('');
     setShowContactModal(true);
   };
 
   const handleContactSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const safeMsg = sanitizeXss(contactMessage);
     setShowContactModal(false);
-    showToast(`Solicitação para ${selectedCandidate?.name} enviada ao Comitê Veterinário CanisTech para auditoria de laudos!`);
+    onRequestBreedMatch(selectedCandidate?.name || '');
+    showToast(
+      `Solicitação auditada para ${selectedCandidate?.name} enviada ao Comitê Veterinário CanisTech! (${safeMsg.length} caracteres validados)`
+    );
   };
 
   const handleCalculateCoi = () => {
-    // Generate realistic genetic COI estimation between 0.8% and 4.2%
-    const randomCoi = (Math.random() * 2.5 + 0.9).toFixed(2);
-    setSimulatedCoi(parseFloat(randomCoi));
-    showToast(`Cálculo de COI Wright concluído: ${randomCoi}% (Dentro do limite ético CanisTech ≤ 6.25%)`);
+    if (!activeDog || !dogHasPedigree || !deterministicCoiResult) {
+      showToast(
+        'Aguardando Árvore Genealógica (3 Gerações): Preencha o Pedigree no cadastro do cão para calcular o COI científico exato'
+      );
+      return;
+    }
+    showToast(
+      `Cálculo Determinístico de Wright concluído: COI = ${deterministicCoiResult.coiPercentage.toFixed(2)}% (${deterministicCoiResult.commonAncestors.length} ancestrais comuns na árvore de 3 gerações)`
+    );
   };
 
   return (
@@ -326,65 +541,117 @@ export const YlovePetView: React.FC<YlovePetViewProps> = ({
             </button>
           </div>
 
-          {/* Interactive Wright's COI Inbreeding Calculator */}
+          {/* Interactive Wright's COI Inbreeding Calculator (100% Determinístico) */}
           <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="font-bold text-sm text-slate-900 font-heading flex items-center gap-1.5">
                 <Dna className="w-4 h-4 text-emerald-700" />
-                <span>Calculadora de Coeficiente COI</span>
+                <span>Calculadora Científica COI de Wright</span>
               </h3>
-              <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">
-                Wright's Formula
+              <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-mono">
+                F_X = Σ(0.5)^(n1+n2+1)·(1+F_A)
               </span>
             </div>
 
             <p className="text-xs text-slate-500 leading-relaxed">
-              Simule o coeficiente de endogamia genética entre seu cão e o reprodutor para evitar doenças recessivas homozigotas:
+              Cálculo determinístico exato de consanguinidade pela fórmula de Sewall Wright analisando os ancestrais comuns na árvore genealógica de 3 gerações (Pais, Avós e Bisavós):
             </p>
 
             <div className="space-y-2 text-xs">
               <div>
-                <label className="block text-slate-500 font-semibold mb-1">Cão Solicitante:</label>
+                <label className="block text-slate-500 font-semibold mb-1">Exemplar Titular (3 Gerações):</label>
                 <input
                   type="text"
                   readOnly
-                  value={activeDog ? `${activeDog.name} (${activeDog.breed})` : 'Nenhum cão cadastrado'}
+                  value={
+                    activeDog
+                      ? `${activeDog.name}${activeDog.kennelAffix ? ` (${activeDog.kennelAffix})` : ''} • ${activeDog.breed}`
+                      : 'Nenhum cão cadastrado'
+                  }
                   className="w-full bg-slate-100 border border-slate-200 rounded-xl p-2 text-xs font-semibold text-slate-700"
                 />
               </div>
 
               <div>
-                <label className="block text-slate-500 font-semibold mb-1">Reprodutor(a) Alvo:</label>
+                <label className="block text-slate-500 font-semibold mb-1">Reprodutor(a) / Matriz para Cruzamento:</label>
                 <select
-                  value={coiFather}
-                  onChange={(e) => setCoiFather(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs outline-none"
+                  value={selectedMateId}
+                  onChange={(e) => setSelectedMateId(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs outline-none font-medium"
                 >
-                  <option>Apollo Von Sternberg (Golden Retriever)</option>
-                  <option>Kiara Bellatrix (Boiadeiro Bernês)</option>
-                  <option>Odin Black Ironwood (Pastor Alemão)</option>
+                  {candidates.map((cand) => (
+                    <option key={cand.id} value={cand.id}>
+                      {cand.name} ({cand.breed} • {cand.pedigreeNumber})
+                    </option>
+                  ))}
                 </select>
               </div>
 
               <button
+                type="button"
                 onClick={handleCalculateCoi}
-                className="w-full py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold transition-colors shadow-xs"
+                className="w-full py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold transition-colors shadow-xs cursor-pointer"
               >
-                Simular Compatibilidade Genética (COI)
+                Calcular COI Científico Determinístico (Wright)
               </button>
             </div>
 
-            <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200 flex items-center justify-between">
-              <div>
-                <span className="text-[10px] uppercase font-bold text-emerald-800">COI Estimado:</span>
-                <p className="text-lg font-bold font-mono text-emerald-900 leading-none">
-                  {simulatedCoi}%
-                </p>
+            {!dogHasPedigree || !deterministicCoiResult ? (
+              <div className="p-3.5 bg-amber-50 rounded-xl border border-amber-200 flex items-start gap-2.5 text-xs text-amber-900">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="font-bold leading-snug">
+                    Aguardando Árvore Genealógica (3 Gerações): Preencha o Pedigree no cadastro do cão para calcular o COI científico exato
+                  </p>
+                  <p className="text-[11px] text-amber-800/90 leading-relaxed">
+                    O motor determinístico de Sewall Wright exige o preenchimento de Pais e Avós (com números de registro RG/CBKC/FCI) na ficha do exemplar.
+                  </p>
+                </div>
               </div>
-              <span className="text-[11px] font-bold text-emerald-700 bg-white px-2 py-1 rounded-lg border border-emerald-200 shadow-xs">
-                Excelente (≤ 6.25%)
-              </span>
-            </div>
+            ) : (
+              <div className="p-3.5 bg-emerald-50 rounded-xl border border-emerald-200 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold text-emerald-800 block">
+                      COI Determinístico (Wright):
+                    </span>
+                    <p className="text-lg font-bold font-mono text-emerald-900 leading-none mt-0.5">
+                      {deterministicCoiResult.coiPercentage.toFixed(2)}%
+                    </p>
+                  </div>
+                  <span
+                    className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border shadow-xs ${
+                      deterministicCoiResult.coiPercentage <= 6.25
+                        ? 'text-emerald-700 bg-white border-emerald-200'
+                        : 'text-red-700 bg-red-50 border-red-200'
+                    }`}
+                  >
+                    {deterministicCoiResult.coiPercentage === 0
+                      ? 'Outcross Total (0% Ancestrais Comuns)'
+                      : deterministicCoiResult.coiPercentage <= 6.25
+                      ? 'Seguro (≤ 6.25%)'
+                      : 'Alerta Endogâmico (> 6.25%)'}
+                  </span>
+                </div>
+
+                {deterministicCoiResult.commonAncestors.length > 0 ? (
+                  <div className="pt-2 border-t border-emerald-200/70 text-[11px] text-emerald-900 space-y-1 font-mono">
+                    <span className="font-bold block font-sans">
+                      Ancestrais Comuns Detectados ({deterministicCoiResult.commonAncestors.length}):
+                    </span>
+                    {deterministicCoiResult.formulaSteps.map((step, i) => (
+                      <div key={i} className="truncate">
+                        • {step}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-emerald-800 pt-1 border-t border-emerald-200/70">
+                    ✓ Nenhum ancestral repetido entre as linhagens paterna e materna nas 3 gerações analisadas ($F_X = 0$).
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -470,6 +737,8 @@ export const YlovePetView: React.FC<YlovePetViewProps> = ({
                 <textarea
                   required
                   rows={3}
+                  value={contactMessage}
+                  onChange={(e) => setContactMessage(e.target.value)}
                   placeholder="Apresente brevemente o objetivo do acasalamento, planejamento do parto e laudos disponíveis..."
                   className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 outline-none focus:border-slate-900 resize-none"
                 />

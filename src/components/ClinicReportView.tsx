@@ -317,7 +317,9 @@ export const ClinicReportView: React.FC<ClinicReportViewProps> = ({
                     {dog.ageYears}a {dog.ageMonths}m
                   </span>
                 </div>
-                <p className="text-xs text-slate-500">{dog.breed}</p>
+                <p className="text-xs text-slate-500">
+                  {dog.breed} {dog.kennelAffix ? `• Afixo: ${dog.kennelAffix}` : ''}
+                </p>
                 <div className="mt-2 space-y-0.5 text-[11px] font-mono text-slate-600">
                   <p>Microchip ISO: <strong>{dog.microchip}</strong></p>
                   <p>RG Pet Oficial: <strong>{dog.rgNumber}</strong></p>
@@ -351,6 +353,52 @@ export const ClinicReportView: React.FC<ClinicReportViewProps> = ({
               <p><strong>E-mail Cadastrado:</strong> {dog.tutorEmail || 'camila.tutor@canistech.com.br'}</p>
               <p><strong>Clínico Anterior:</strong> Dr. Thiago Ramos (CRMV-SP 24.112)</p>
             </div>
+
+            {/* Árvore Genealógica de 3 Gerações no Dossiê do Animal */}
+            {dog.pedigree && (dog.pedigree.father?.name || dog.pedigree.mother?.name) && (
+              <div className="pt-3 border-t border-slate-100 space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700">
+                    Árvore Genealógica (3 Gerações • CBKC/RGC)
+                  </span>
+                  {dog.kennelAffix && (
+                    <span className="text-[10px] font-semibold text-slate-500">
+                      {dog.kennelAffix}
+                    </span>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-1.5 text-[10.5px]">
+                  <div className="p-2 rounded-lg bg-blue-50/60 border border-blue-100">
+                    <span className="text-[9px] font-bold uppercase text-blue-700 block">Pai (Padreador)</span>
+                    <strong className="text-slate-900 block truncate">{dog.pedigree.father?.name}</strong>
+                    <span className="font-mono text-[9.5px] text-slate-500">{dog.pedigree.father?.regNumber || dog.pedigree.father?.registrationNumber}</span>
+                  </div>
+                  <div className="p-2 rounded-lg bg-rose-50/60 border border-rose-100">
+                    <span className="text-[9px] font-bold uppercase text-rose-700 block">Mãe (Matriz)</span>
+                    <strong className="text-slate-900 block truncate">{dog.pedigree.mother?.name}</strong>
+                    <span className="font-mono text-[9.5px] text-slate-500">{dog.pedigree.mother?.regNumber || dog.pedigree.mother?.registrationNumber}</span>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-1 text-[9.5px] text-slate-600 bg-slate-50 p-2 rounded-lg border border-slate-100">
+                  <div>
+                    <span className="text-slate-400 block text-[8.5px]">Avô Paterno:</span>
+                    <strong className="truncate block">{dog.pedigree.paternalGrandfather?.name || 'N/I'}</strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[8.5px]">Avó Paterna:</span>
+                    <strong className="truncate block">{dog.pedigree.paternalGrandmother?.name || 'N/I'}</strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[8.5px]">Avô Materno:</span>
+                    <strong className="truncate block">{dog.pedigree.maternalGrandfather?.name || 'N/I'}</strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[8.5px]">Avó Materna:</span>
+                    <strong className="truncate block">{dog.pedigree.maternalGrandmother?.name || 'N/I'}</strong>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Anamnese Executiva */}

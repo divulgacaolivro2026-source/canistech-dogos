@@ -25,9 +25,13 @@ import {
 
 interface LoginScreenProps {
   onLoginSuccess: (user: AuthUser) => void;
+  emergencyScanNotice?: string | null;
 }
 
-export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
+export const LoginScreen: React.FC<LoginScreenProps> = ({
+  onLoginSuccess,
+  emergencyScanNotice,
+}) => {
   const [selectedProviderModal, setSelectedProviderModal] = useState<AuthProvider | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [customEmail, setCustomEmail] = useState<string>('');
@@ -153,7 +157,20 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
       </header>
 
       {/* Main Login Gate Content */}
-      <main className="relative z-10 w-full max-w-7xl mx-auto px-4 sm:px-6 py-8 md:py-12 flex-1 flex items-center">
+      <main className="relative z-10 w-full max-w-7xl mx-auto px-4 sm:px-6 py-8 md:py-12 flex-1 flex flex-col justify-center">
+        {emergencyScanNotice && (
+          <div className="mb-6 p-4 rounded-2xl bg-amber-500/15 border-2 border-amber-500/50 text-amber-200 flex items-start gap-3 shadow-lg">
+            <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-amber-500/30 text-amber-300 border border-amber-400/40">
+                Acesso Restrito ao Dossiê de Emergência
+              </span>
+              <p className="text-xs sm:text-sm font-bold text-white">
+                {emergencyScanNotice}
+              </p>
+            </div>
+          </div>
+        )}
         <div className="w-full grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
           {/* Left Column: Platform Presentation & Trust Bento */}
           <div className="lg:col-span-7 space-y-6">

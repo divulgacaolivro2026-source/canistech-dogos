@@ -1,16 +1,39 @@
 // Caminho: src/services/goldAndPrivacyService.ts
-import { clearUserSession, getRegisteredAccounts, isSeniorAdmin } from './authService';
-import { TrainingCertificateRecord } from '../types';
+import {
+  clearUserSession,
+  getRegisteredAccounts,
+  isSeniorAdmin,
+  computeSha256Hex,
+  computeSha256HexSync,
+  sanitizeXss,
+  sanitizeSafeDisplay,
+  logAuditEvent,
+} from './authService';
+import { TrainingCertificateRecord, LgpdConsentRecord } from '../types';
 
 export const MAX_GOLD_SLOTS = 200;
 export const GOLD_DURATION_DAYS = 90; // 3 meses de validade
-const GOLD_STORAGE_KEY = 'canistech_gold_memberships_v1';
+const GOLD_STORAGE_KEY = 'canistech_gold_memberships_v2_hashed';
+const LEGACY_GOLD_STORAGE_KEY = 'canistech_gold_memberships_v1';
 const ACCOUNTS_REGISTRY_KEY = 'canistech_accounts_registry_v3';
+const LGPD_CONSENT_STORAGE_KEY = 'canistech_lgpd_consent_v1';
+
+export const LGPD_POLICY_VERSION = 'v2026.4-LGPD-CFMV-CDC';
+
+export const DPO_CONTACT_INFO = {
+  dpoName: 'Comitê de Governança e Proteção de Dados CanisTech (DPO)',
+  dpoEmail: 'dpo.privacidade@canistech.com.br',
+  legalBasis: 'Art. 7º, I, Art. 8º e Art. 18 (Incisos I a IX) da Lei Federal nº 13.709/2018 (LGPD) e Art. 41 (Encarregado DPO)',
+  slaResponse: 'Atendimento imediato para Portabilidade/Exclusão automatizada e até 15 dias para requisições formais (Art. 19, II LGPD)',
+};
 
 export interface GoldMembershipRecord {
   email: string;
   userName: string;
-  accessPassword: string;
+  /** Hash SHA-256 da credencial (NUNCA persiste senha em texto puro no localStorage) */
+  accessPasswordHash: string;
+  /** Campo efêmero retornado apenas em memória no instante da geração para cópia única pelo tutor */
+  accessPassword?: string;
   donationAmountBrl: number;
   activatedAt: string;
   expiresAt: string;
@@ -36,10 +59,34 @@ export interface UserGoldStatus {
   isSeniorBypass: boolean;
 }
 
+function hashGoldCredentialSync(email: string, rawToken: string): string {
+  const normalizedEmail = email.toLowerCase().trim();
+  const normalizedToken = rawToken.trim().toUpperCase();
+  return computeSha256HexSync(`GOLD_CREDENTIAL::${normalizedEmail}::${normalizedToken}::CANISTECH_SALT_V2`);
+}
+
+export async function hashGoldCredentialWebCrypto(email: string, rawToken: string): Promise<string> {
+  const normalizedEmail = email.toLowerCase().trim();
+  const normalizedToken = rawToken.trim().toUpperCase();
+  return computeSha256Hex(`GOLD_CREDENTIAL::${normalizedEmail}::${normalizedToken}::CANISTECH_SALT_V2`);
+}
+
 function loadRawMemberships(): GoldMembershipRecord[] {
   try {
+    // Migra e purga qualquer registro legado que continha texto puro
+    const legacyRaw = localStorage.getItem(LEGACY_GOLD_STORAGE_KEY);
+    if (legacyRaw) {
+      localStorage.removeItem(LEGACY_GOLD_STORAGE_KEY);
+    }
+
     const raw = localStorage.getItem(GOLD_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as GoldMembershipRecord[];
+    // Garante que nenhuma senha em texto puro permaneça em objetos carregados
+    return parsed.map((item) => {
+      const { accessPassword: _removedPlaintext, ...safeRest } = item;
+      return safeRest;
+    });
   } catch {
     return [];
   }
@@ -47,7 +94,16 @@ function loadRawMemberships(): GoldMembershipRecord[] {
 
 function saveRawMemberships(list: GoldMembershipRecord[]): void {
   try {
-    localStorage.setItem(GOLD_STORAGE_KEY, JSON.stringify(list));
+    // Sanitiza e remove estritamente qualquer campo accessPassword antes de gravar no localStorage
+    const sanitizedForStorage = list.map((item) => {
+      const { accessPassword: _neverStorePlaintext, ...rest } = item;
+      return {
+        ...rest,
+        email: sanitizeSafeDisplay(rest.email).toLowerCase().trim(),
+        userName: sanitizeSafeDisplay(rest.userName),
+      };
+    });
+    localStorage.setItem(GOLD_STORAGE_KEY, JSON.stringify(sanitizedForStorage));
   } catch (e) {
     console.error('Erro ao salvar registros Gold:', e);
   }
@@ -91,13 +147,14 @@ export function getUserGoldStatus(email?: string | null): UserGoldStatus {
   if (!email) return { record: null, isActive: false, isUnlocked: false, daysRemaining: 0, isSeniorBypass: false };
   const normalized = email.toLowerCase().trim();
 
-  // Preserva bypass para contas de Administrador Sênior
+  // Preserva bypass para contas de Administrador Sênior usando apenas hash SHA-256 (zero senha em texto puro)
   if (isSeniorAdmin(normalized)) {
+    const adminBypassHash = computeSha256HexSync(`SENIOR_ADMIN_BYPASS::${normalized}`);
     return {
       record: {
         email: normalized,
         userName: 'Administrador Sênior',
-        accessPassword: 'GOLD-MASTER-ADMIN',
+        accessPasswordHash: adminBypassHash,
         donationAmountBrl: 0,
         activatedAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + GOLD_DURATION_DAYS * 86400000).toISOString(),
@@ -149,15 +206,26 @@ export function issueGoldPasswordAfterDonation(
     throw new Error('Informe um valor de doação espontânea válido para gerar sua senha de acesso.');
   }
 
-  const randomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
-  const accessPassword = `GOLD-${randomCode}`;
+  // Geração criptográfica de bytes aleatórios via Web Crypto API
+  const randomBytes = new Uint8Array(4);
+  if (typeof window !== 'undefined' && window.crypto) {
+    window.crypto.getRandomValues(randomBytes);
+  }
+  const randomCode = Array.from(randomBytes)
+    .map((b) => b.toString(36).padStart(2, '0'))
+    .join('')
+    .substring(0, 6)
+    .toUpperCase();
+
+  const oneTimePlaintextToken = `GOLD-${randomCode}`;
+  const accessPasswordHash = hashGoldCredentialSync(normalized, oneTimePlaintextToken);
   const now = new Date();
   const expires = new Date(now.getTime() + GOLD_DURATION_DAYS * 24 * 60 * 60 * 1000);
 
-  const newRecord: GoldMembershipRecord = {
+  const persistentRecord: GoldMembershipRecord = {
     email: normalized,
-    userName,
-    accessPassword,
+    userName: sanitizeSafeDisplay(userName),
+    accessPasswordHash,
     donationAmountBrl: Number(amountBrl),
     activatedAt: now.toISOString(),
     expiresAt: expires.toISOString(),
@@ -168,10 +236,24 @@ export function issueGoldPasswordAfterDonation(
   const all = loadRawMemberships().filter(
     (m) => !(m.email === normalized && m.status === 'active')
   );
-  all.unshift(newRecord);
+  all.unshift(persistentRecord);
   saveRawMemberships(all);
 
-  return newRecord;
+  // Confirmação assíncrona via Web Crypto API nativa (crypto.subtle.digest('SHA-256', ...))
+  void hashGoldCredentialWebCrypto(normalized, oneTimePlaintextToken).then((webCryptoDigest) => {
+    const currentList = loadRawMemberships();
+    const targetIdx = currentList.findIndex((m) => m.email === normalized && m.status === 'active');
+    if (targetIdx >= 0) {
+      currentList[targetIdx].accessPasswordHash = webCryptoDigest;
+      saveRawMemberships(currentList);
+    }
+  });
+
+  // Retorna o token em memória APENAS para exibição única na UI (não fica salvo no localStorage)
+  return {
+    ...persistentRecord,
+    accessPassword: oneTimePlaintextToken,
+  };
 }
 
 export function validateGoldPassword(email: string, inputPassword: string): boolean {
@@ -184,11 +266,13 @@ export function validateGoldPassword(email: string, inputPassword: string): bool
     return true;
   }
 
+  const candidateHash = hashGoldCredentialSync(normalized, cleanPass);
+
   const idx = list.findIndex(
     (m) =>
       m.email === normalized &&
       m.status === 'active' &&
-      m.accessPassword.toUpperCase() === cleanPass
+      m.accessPasswordHash === candidateHash
   );
 
   if (idx === -1) return false;
@@ -196,6 +280,75 @@ export function validateGoldPassword(email: string, inputPassword: string): bool
   list[idx].isUnlockedWithPassword = true;
   saveRawMemberships(list);
   return true;
+}
+
+export async function validateGoldPasswordWebCrypto(email: string, inputPassword: string): Promise<boolean> {
+  const normalized = email.toLowerCase().trim();
+  if (isSeniorAdmin(normalized)) return true;
+
+  const candidateHash = await hashGoldCredentialWebCrypto(normalized, inputPassword);
+  const list = loadRawMemberships();
+  const idx = list.findIndex(
+    (m) => m.email === normalized && m.status === 'active' && m.accessPasswordHash === candidateHash
+  );
+  if (idx === -1) return false;
+
+  list[idx].isUnlockedWithPassword = true;
+  saveRawMemberships(list);
+  return true;
+}
+
+// ==========================================
+// GESTÃO DE CONSENTIMENTO LGPD (ART. 7º e 8º)
+// ==========================================
+export function getLgpdConsent(email?: string | null): LgpdConsentRecord | null {
+  try {
+    const key = email
+      ? `${LGPD_CONSENT_STORAGE_KEY}_${email.toLowerCase().trim()}`
+      : `${LGPD_CONSENT_STORAGE_KEY}_device`;
+    const raw = localStorage.getItem(key) || localStorage.getItem(`${LGPD_CONSENT_STORAGE_KEY}_device`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as LgpdConsentRecord;
+    if (!parsed.accepted || !parsed.consentHash) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveLgpdConsentWithWebCrypto(email?: string | null): Promise<LgpdConsentRecord> {
+  const timestamp = new Date().toISOString();
+  const normalizedEmail = email ? sanitizeSafeDisplay(email).toLowerCase().trim() : 'titular-local-device';
+  const payload = `LGPD_CONSENT::${normalizedEmail}::${LGPD_POLICY_VERSION}::${timestamp}::LEI_13709_2018`;
+  const digest = await computeSha256Hex(payload);
+  const consentHash = `LGPD-SHA256-${digest.substring(0, 24).toUpperCase()}`;
+
+  const record: LgpdConsentRecord = {
+    accepted: true,
+    timestamp,
+    policyVersion: LGPD_POLICY_VERSION,
+    consentHash,
+    userEmail: normalizedEmail,
+  };
+
+  try {
+    localStorage.setItem(`${LGPD_CONSENT_STORAGE_KEY}_device`, JSON.stringify(record));
+    if (email) {
+      localStorage.setItem(`${LGPD_CONSENT_STORAGE_KEY}_${normalizedEmail}`, JSON.stringify(record));
+    }
+    logAuditEvent({
+      userEmail: normalizedEmail,
+      action: 'LGPD_CONSENT_GRANTED',
+      provider: 'system',
+      ipMock: '127.0.0.1 (LGPD Art. 8 Gate)',
+      status: 'SUCCESS',
+      details: `Consentimento explícito registrado (${LGPD_POLICY_VERSION}) • Hash: ${consentHash}`,
+    });
+  } catch (e) {
+    console.error('Erro ao salvar consentimento LGPD:', e);
+  }
+
+  return record;
 }
 
 // Permite ao usuário sair quando quiser, liberando a vaga para outro
@@ -230,19 +383,27 @@ export function saveTrainingProgress(email: string, stepIds: string[]): void {
   }
 }
 
-// Portabilidade LGPD: Baixa todos os dados que o usuário cadastrou na plataforma
+// Portabilidade LGPD (Art. 18, V): Baixa todos os dados que o usuário cadastrou na plataforma
 export function exportAllUserDataJson(email: string): void {
   const normalized = email.toLowerCase().trim();
   const vaultRaw = localStorage.getItem(`canistech_vault_${normalized}`);
   const goldStatus = getUserGoldStatus(normalized);
   const accounts = getRegisteredAccounts().filter((a) => a.email === normalized);
+  const lgpdConsent = getLgpdConsent(normalized);
+  const trainingProgress = getTrainingProgress(normalized);
 
   const exportBundle = {
     exportedAt: new Date().toISOString(),
-    platform: 'CanisTech Digital Systems',
+    platform: 'CanisTech Digital Systems • DogOS',
+    regulatoryCompliance: {
+      law: 'Lei Federal nº 13.709/2018 (LGPD - Art. 18, V - Portabilidade de Dados)',
+      dpoContact: DPO_CONTACT_INFO,
+      lgpdConsentRecord: lgpdConsent,
+    },
     ownerEmail: normalized,
     accountProfile: accounts[0] || null,
     goldMembership: goldStatus.record,
+    trainingProgressModules: trainingProgress,
     dogOsVault: vaultRaw ? JSON.parse(vaultRaw) : null,
   };
 
@@ -257,7 +418,7 @@ export function exportAllUserDataJson(email: string): void {
   URL.revokeObjectURL(url);
 }
 
-// Direito ao Esquecimento LGPD: Retira todos os dados do usuário da plataforma e libera vaga
+// Direito ao Esquecimento LGPD (Art. 18, VI): Retira todos os dados do usuário da plataforma e libera vaga
 export function purgeAllUserDataFromPlatform(email: string): boolean {
   const normalized = email.toLowerCase().trim();
 
@@ -272,12 +433,14 @@ export function purgeAllUserDataFromPlatform(email: string): boolean {
 
   // 2. Remove cofre de cães, vacinas, pesagens e atividades
   localStorage.removeItem(`canistech_vault_${normalized}`);
+  localStorage.removeItem(`${LGPD_CONSENT_STORAGE_KEY}_${normalized}`);
 
   // 3. Remove progressos e certificados de adestramento vinculados
   Object.keys(localStorage).forEach((key) => {
     if (
       key.startsWith('canistech_training_progress_') ||
-      key.startsWith('canistech_training_cert_')
+      key.startsWith('canistech_training_cert_') ||
+      key.startsWith('canistech_dog_photo_')
     ) {
       if (key.includes(normalized)) {
         localStorage.removeItem(key);
@@ -300,21 +463,23 @@ export function purgeAllUserDataFromPlatform(email: string): boolean {
 // ==========================================
 // CERTIFICADOS DE CONCLUSÃO DE ADESTRAMENTO
 // ==========================================
-export function generateTrainingCertificateAuthCode(): string {
-  const chars = '0123456789ABCDEF';
-  let part1 = '';
-  let part2 = '';
-  for (let i = 0; i < 4; i++) {
-    part1 += chars.charAt(Math.floor(Math.random() * chars.length));
-    part2 += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return `CERT-CT-2026-${part1}-${part2}`;
+export function generateTrainingCertificateAuthCode(seed?: string): string {
+  const rawSeed = `${seed || Date.now()}::${performance.now()}::CANISTECH-CERT-SHA256`;
+  const digest = computeSha256HexSync(rawSeed).toUpperCase();
+  return `CERT-CT-2026-${digest.slice(0, 4)}-${digest.slice(4, 8)}`;
 }
 
 export function saveTrainingCertificate(cert: TrainingCertificateRecord): void {
   try {
-    const key = `canistech_training_cert_${cert.tutorEmail.trim().toLowerCase()}_${cert.dogId}`;
-    localStorage.setItem(key, JSON.stringify(cert));
+    const sanitizedCert: TrainingCertificateRecord = {
+      ...cert,
+      dogName: sanitizeSafeDisplay(cert.dogName),
+      dogBreed: sanitizeSafeDisplay(cert.dogBreed),
+      tutorName: sanitizeSafeDisplay(cert.tutorName),
+      tutorEmail: sanitizeSafeDisplay(cert.tutorEmail),
+    };
+    const key = `canistech_training_cert_${sanitizedCert.tutorEmail.trim().toLowerCase()}_${sanitizedCert.dogId}`;
+    localStorage.setItem(key, JSON.stringify(sanitizedCert));
   } catch (e) {
     console.error('Erro ao salvar certificado de treino:', e);
   }
@@ -329,4 +494,6 @@ export function getTrainingCertificate(email: string, dogId: string): TrainingCe
     return null;
   }
 }
+
+export { sanitizeXss, sanitizeSafeDisplay };
 
