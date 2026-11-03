@@ -1886,7 +1886,7 @@ export const DogOSDashboard: React.FC<DogOSDashboardProps> = ({
                     ? `${window.location.origin}/?view=dossier&dogId=${encodeURIComponent(
                         dog.id
                       )}&rgc=${encodeURIComponent(formatRgcCpf(dog.rgNumber, dog.id))}`
-                    : `https://canistech.com.br/?view=dossier&dogId=${dog.id}&rgc=${formatRgcCpf(
+                    : `https://canistech.net.br/?view=dossier&dogId=${dog.id}&rgc=${formatRgcCpf(
                         dog.rgNumber,
                         dog.id
                       )}`

@@ -115,7 +115,7 @@ export const VaccinationPage: React.FC<VaccinationPageProps> = ({
   // Contatos do Tutor para disparos de 7 dias
   const [tutorPhoneInput, setTutorPhoneInput] = useState<string>(activeDog?.tutorPhone || '(11) 98765-4321');
   const [tutorEmailInput, setTutorEmailInput] = useState<string>(
-    activeDog?.tutorEmail || currentUser?.email || 'tutor@canistech.com.br'
+    activeDog?.tutorEmail || currentUser?.email || 'tutor@canistech.net.br'
   );
   const [auto7dActive, setAuto7dActive] = useState<boolean>(true);
 
@@ -206,7 +206,7 @@ export const VaccinationPage: React.FC<VaccinationPageProps> = ({
       ? `${window.location.origin}/?view=vacinas&dogId=${encodeURIComponent(
           activeDog.id
         )}&rgc=${encodeURIComponent(rgcFormatted)}`
-      : `https://canistech.com.br/?view=vacinas&dogId=${activeDog.id}&rgc=${rgcFormatted}`;
+      : `https://canistech.net.br/?view=vacinas&dogId=${activeDog.id}&rgc=${rgcFormatted}`;
   }, [activeDog, rgcFormatted]);
 
   const securityHash = useMemo(() => {
@@ -250,7 +250,7 @@ export const VaccinationPage: React.FC<VaccinationPageProps> = ({
     if (!activeDog) return;
     generateVaccine7dEmailDetails(activeDog, dose, tutorEmailInput);
     logAuditEvent({
-      userEmail: currentUser?.email || activeDog.tutorEmail || 'tutor@canistech.com.br',
+      userEmail: currentUser?.email || activeDog.tutorEmail || 'tutor@canistech.net.br',
       action: 'VACCINE_7D_NOTIFICATION_DISPATCHED',
       provider: currentUser?.provider || 'google',
       ipMock: '127.0.0.1 (7D Alert Engine)',
@@ -266,7 +266,7 @@ export const VaccinationPage: React.FC<VaccinationPageProps> = ({
     try {
       generateAndDownloadVaccineBookletPdf(activeDog, scheduleDoses);
       logAuditEvent({
-        userEmail: currentUser?.email || activeDog.tutorEmail || 'tutor@canistech.com.br',
+        userEmail: currentUser?.email || activeDog.tutorEmail || 'tutor@canistech.net.br',
         action: 'VACCINE_BOOKLET_PDF_DOWNLOADED',
         provider: currentUser?.provider || 'google',
         ipMock: '127.0.0.1 (Booklet Engine)',
@@ -287,7 +287,7 @@ export const VaccinationPage: React.FC<VaccinationPageProps> = ({
       const blobUrl = createVaccineBookletPdfBlobUrl(activeDog, scheduleDoses);
       setBookletPrintPreviewBlobUrl(blobUrl);
       logAuditEvent({
-        userEmail: currentUser?.email || activeDog.tutorEmail || 'tutor@canistech.com.br',
+        userEmail: currentUser?.email || activeDog.tutorEmail || 'tutor@canistech.net.br',
         action: 'VACCINE_BOOKLET_PRINT_PREVIEW_OPENED',
         provider: currentUser?.provider || 'google',
         ipMock: '127.0.0.1 (Embedded PDF Preview)',

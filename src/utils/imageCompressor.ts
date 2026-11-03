@@ -2,6 +2,7 @@
 
 export interface CompressedImageResult {
   dataUrl: string;
+  blob: Blob;
   width: number;
   height: number;
   sizeBytes: number;
@@ -11,7 +12,7 @@ export interface CompressedImageResult {
 
 export const TARGET_WIDTH_3X4 = 360;
 export const TARGET_HEIGHT_3X4 = 480;
-export const DEFAULT_WEBP_QUALITY = 0.75;
+export const DEFAULT_WEBP_QUALITY = 0.8;
 
 /**
  * Calcula o peso real em bytes a partir de uma string DataURL Base64
@@ -24,10 +25,25 @@ export function estimateDataUrlBytes(dataUrl: string): number {
 }
 
 /**
+ * Converte dataUrl base64 em Blob binário
+ */
+export function dataUrlToBlob(dataUrl: string): Blob {
+  const arr = dataUrl.split(',');
+  const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/webp';
+  const bstr = atob(arr[1]);
+  let n = bstr.length;
+  const u8arr = new Uint8Array(n);
+  while (n--) {
+    u8arr[n] = bstr.charCodeAt(n);
+  }
+  return new Blob([u8arr], { type: mime });
+}
+
+/**
  * Processa qualquer arquivo de imagem (File/Blob) via <canvas> HTML5 no client-side:
  * - Redimensiona proporcionalmente (center-crop inteligente 3x4) para 360px x 480px
- * - Comprime para image/webp com qualidade 0.75 (garantindo peso final enxuto ~25 KB a 55 KB)
- * - Elimina definitivamente o erro QuotaExceededError no localStorage e otimiza o banco Supabase
+ * - Comprime para image/webp com qualidade 0.8 (garantindo peso final enxuto ~25 KB a 55 KB)
+ * - Retorna tanto o DataURL para exibição imediata quanto o Blob binário para upload no Supabase Storage
  */
 export async function compressDogImageToWebp(
   fileOrDataUrl: File | Blob | string,
@@ -92,18 +108,19 @@ export async function compressDogImageToWebp(
   let currentQuality = quality;
   let dataUrl = canvas.toDataURL('image/webp', currentQuality);
 
-  // Caso a imagem ainda ultrapasse 55 KB por excesso de textura, ajusta qualidade suavemente
   let sizeBytes = estimateDataUrlBytes(dataUrl);
-  while (sizeBytes > 55 * 1024 && currentQuality > 0.5) {
-    currentQuality = Number((currentQuality - 0.07).toFixed(2));
+  while (sizeBytes > 60 * 1024 && currentQuality > 0.5) {
+    currentQuality = Number((currentQuality - 0.05).toFixed(2));
     dataUrl = canvas.toDataURL('image/webp', currentQuality);
     sizeBytes = estimateDataUrlBytes(dataUrl);
   }
 
+  const blob = dataUrlToBlob(dataUrl);
   const sizeKb = Number((sizeBytes / 1024).toFixed(1));
 
   return {
     dataUrl,
+    blob,
     width: TARGET_WIDTH_3X4,
     height: TARGET_HEIGHT_3X4,
     sizeBytes,

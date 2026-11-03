@@ -4,6 +4,7 @@ import { DogProfile, BreedGroup, LifeStage, DogBloodType, AuthUser, DogPedigree 
 import { formatRgcCpf } from '../utils/qrCodeGenerator';
 import { compressDogImageToWebp } from '../utils/imageCompressor';
 import { sanitizeSafeDisplay } from '../services/authService';
+import { uploadDogPhotoToSupabase } from '../services/supabaseClient';
 import {
   Calculator,
   Heart,
@@ -134,7 +135,7 @@ export const DogRegistrationModal: React.FC<DogRegistrationModalProps> = ({
   });
   const [photoUrl, setPhotoUrl] = useState<string>(() => {
     if (dogToEdit?.photoUrl) return dogToEdit.photoUrl;
-    return BREED_SAMPLE_PHOTOS['Golden Retriever'] || '/src/assets/images/canistech_golden_thor_1792283197894.jpg';
+    return '';
   });
   const [compressedInfo, setCompressedInfo] = useState<string | null>(null);
   const [isCompressingPhoto, setIsCompressingPhoto] = useState<boolean>(false);
@@ -161,10 +162,6 @@ export const DogRegistrationModal: React.FC<DogRegistrationModalProps> = ({
 
   const handleBreedChange = (newBreed: string) => {
     setBreed(newBreed);
-    if (!photoUrl.startsWith('data:image/')) {
-      const sample = BREED_SAMPLE_PHOTOS[newBreed] || BREED_SAMPLE_PHOTOS['Vira-Lata (SRD Caramelo)'];
-      if (sample) setPhotoUrl(sample);
-    }
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -172,9 +169,19 @@ export const DogRegistrationModal: React.FC<DogRegistrationModalProps> = ({
     if (!file) return;
     setIsCompressingPhoto(true);
     try {
-      const compressed = await compressDogImageToWebp(file, 0.75);
+      const compressed = await compressDogImageToWebp(file, 0.8);
       setPhotoUrl(compressed.dataUrl);
       setCompressedInfo(`WebP ${compressed.width}×${compressed.height}px (${compressed.sizeKb} KB)`);
+
+      // Upload do arquivo binário (Blob) diretamente para o Supabase Storage (bucket dog-photos)
+      if (currentUser?.id) {
+        uploadDogPhotoToSupabase(compressed.blob, currentUser.id).then((cloudUrl) => {
+          if (cloudUrl) {
+            setPhotoUrl(cloudUrl);
+            setCompressedInfo(`WebP Nuvem (${compressed.sizeKb} KB)`);
+          }
+        });
+      }
     } catch (err) {
       console.error('Erro ao comprimir imagem para WebP:', err);
     } finally {

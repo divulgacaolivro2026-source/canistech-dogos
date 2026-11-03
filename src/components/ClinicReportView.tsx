@@ -350,7 +350,7 @@ export const ClinicReportView: React.FC<ClinicReportViewProps> = ({
             <div className="space-y-1 text-xs text-slate-600">
               <p><strong>Tutora:</strong> {dog.tutorName} (Médica)</p>
               <p><strong>Contato Emergência:</strong> {dog.tutorPhone}</p>
-              <p><strong>E-mail Cadastrado:</strong> {dog.tutorEmail || 'camila.tutor@canistech.com.br'}</p>
+              <p><strong>E-mail Cadastrado:</strong> {dog.tutorEmail || 'camila.tutor@canistech.net.br'}</p>
               <p><strong>Clínico Anterior:</strong> Dr. Thiago Ramos (CRMV-SP 24.112)</p>
             </div>
 
@@ -1004,7 +1004,7 @@ export const ClinicReportView: React.FC<ClinicReportViewProps> = ({
                 <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl text-[11px] text-amber-900 flex items-start gap-2">
                   <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                   <p>
-                    O e-mail será enviado com remetente institucional do <strong>CanisTech DogOS</strong> e identificação da tutora <strong>{dog.tutorName}</strong> ({dog.tutorEmail || 'camila.tutor@canistech.com.br'}), contendo o anexo em PDF e o link de acesso criptografado de 72h.
+                    O e-mail será enviado com remetente institucional do <strong>CanisTech DogOS</strong> e identificação da tutora <strong>{dog.tutorName}</strong> ({dog.tutorEmail || 'camila.tutor@canistech.net.br'}), contendo o anexo em PDF e o link de acesso criptografado de 72h.
                   </p>
                 </div>
               </div>
@@ -1023,7 +1023,7 @@ export const ClinicReportView: React.FC<ClinicReportViewProps> = ({
                       <strong>Para:</strong> {vetName} &lt;{vetEmail}&gt;
                     </p>
                     <p>
-                      <strong>Cc (Tutor):</strong> {dog.tutorName} &lt;{dog.tutorEmail || 'camila.tutor@canistech.com.br'}&gt;
+                      <strong>Cc (Tutor):</strong> {dog.tutorName} &lt;{dog.tutorEmail || 'camila.tutor@canistech.net.br'}&gt;
                     </p>
                     <p className="font-bold text-slate-900">
                       <strong>Assunto:</strong> [Prontuário CanisTech] {dog.name} ({dog.breed}) - Relatório Clínico Oficial Homologado

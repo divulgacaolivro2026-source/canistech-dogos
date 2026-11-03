@@ -22,7 +22,7 @@ export const LGPD_POLICY_VERSION = 'v2026.4-LGPD-CFMV-CDC';
 
 export const DPO_CONTACT_INFO = {
   dpoName: 'Comitê de Governança e Proteção de Dados CanisTech (DPO)',
-  dpoEmail: 'dpo.privacidade@canistech.com.br',
+  dpoEmail: 'dpo.privacidade@canistech.net.br',
   legalBasis: 'Art. 7º, I, Art. 8º e Art. 18 (Incisos I a IX) da Lei Federal nº 13.709/2018 (LGPD) e Art. 41 (Encarregado DPO)',
   slaResponse: 'Atendimento imediato para Portabilidade/Exclusão automatizada e até 15 dias para requisições formais (Art. 19, II LGPD)',
 };

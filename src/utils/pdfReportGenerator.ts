@@ -172,7 +172,7 @@ export function generatePetClinicReportPDF(
 
   doc.setFont('helvetica', 'normal');
   doc.text(`Telefone: ${dog.tutorPhone}`, col3X, infoStartY + 5);
-  doc.text(`E-mail: ${dog.tutorEmail || 'camila.tutor@canistech.com.br'}`, col3X, infoStartY + 10);
+  doc.text(`E-mail: ${dog.tutorEmail || 'camila.tutor@canistech.net.br'}`, col3X, infoStartY + 10);
   doc.text(`Localidade: ${dog.city} - ${dog.state}`, col3X, infoStartY + 15);
   doc.text(`Médico Anterior: Dr. Thiago Ramos (CRMV 24.112)`, col3X, infoStartY + 20);
 

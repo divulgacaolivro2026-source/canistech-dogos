@@ -332,7 +332,7 @@ export interface RegionGeoStat {
   dominantGroup: string;
 }
 
-export type AuthProvider = 'google' | 'facebook';
+export type AuthProvider = 'google';
 
 export interface AuthUser {
   id: string;

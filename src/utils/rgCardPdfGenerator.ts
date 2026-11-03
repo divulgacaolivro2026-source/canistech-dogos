@@ -8,6 +8,7 @@ import {
   getDogPhotoUrl,
 } from './qrCodeGenerator';
 import { sanitizeSafeDisplay } from '../services/authService';
+import { formatExactBiologicalAgeRgc } from './vaccineUtils';
 
 export function buildOfficialRgCardPdfDoc(dog: DogProfile): {
   doc: jsPDF;
@@ -35,21 +36,12 @@ export function buildOfficialRgCardPdfDoc(dog: DogProfile): {
   );
 
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8.5);
-  doc.setTextColor(100, 116, 139);
-  doc.text(
-    'SISTEMA NACIONAL CANISTECH • REGISTRO PARTICULAR DE IDENTIFICAÇÃO E BIOMETRIA CANINA (RGC)',
-    105,
-    24,
-    { align: 'center' }
-  );
-
   doc.setFontSize(7.5);
   doc.setTextColor(148, 163, 184);
   doc.text(
     'Padrão Nacional de Segurança Cadastral • Proporção ISO ID-1 (85.6mm x 54mm) • Plastificação recomendada',
     105,
-    29,
+    25,
     { align: 'center' }
   );
 
@@ -216,8 +208,8 @@ export function buildOfficialRgCardPdfDoc(dog: DogProfile): {
   doc.setTextColor(15, 23, 42);
   doc.text(dog.birthDate || '--/--/----', colX, frontY + 37);
   doc.setFont('helvetica', 'bold');
-  const phaseStr = dog.lifeStage ? dog.lifeStage.toUpperCase() : 'ADULTO';
-  doc.text(`${phaseStr} (${dog.ageYears || 1} ANOS)`, colX + 34, frontY + 37);
+  const exactAgeStr = formatExactBiologicalAgeRgc(dog.birthDate, dog.lifeStage, dog.ageYears);
+  doc.text(exactAgeStr, colX + 34, frontY + 37);
 
   // Microchip Padrão ISO 11784/11785 em Destaque
   doc.setFont('helvetica', 'bold');
@@ -324,7 +316,7 @@ export function buildOfficialRgCardPdfDoc(dog: DogProfile): {
       ? `${window.location.origin}/?view=dossier&dogId=${encodeURIComponent(
           dog.id
         )}&rgc=${encodeURIComponent(rgcNumberFormatted)}`
-      : `https://canistech.com.br/?view=dossier&dogId=${dog.id}&rgc=${rgcNumberFormatted}`;
+      : `https://canistech.net.br/?view=dossier&dogId=${dog.id}&rgc=${rgcNumberFormatted}`;
 
   try {
     const { size: qrMatrixSize, matrix } = generateQrMatrix(emergencyScanUrl);
@@ -358,7 +350,7 @@ export function buildOfficialRgCardPdfDoc(dog: DogProfile): {
   const cleanRg = rgcNumberFormatted.replace(/[^A-Z0-9]/g, '');
   const cleanName = (dog.name || 'PET').toUpperCase().replace(/[^A-Z]/g, '');
   doc.text(`I<BRACANISTECH<<${cleanRg}<<<<<<<<<<<<<<<`, backX + 3.5, backY + 44);
-  doc.text(`${cleanName}<<DOGOS<<WWW.CANISTECH.COM.BR<<<<`, backX + 3.5, backY + 48);
+  doc.text(`${cleanName}<<DOGOS<<WWW.CANISTECH.NET.BR<<<<`, backX + 3.5, backY + 48);
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(4.2);

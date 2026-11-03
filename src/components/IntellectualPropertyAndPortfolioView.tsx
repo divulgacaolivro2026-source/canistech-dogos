@@ -346,7 +346,7 @@ export const IntellectualPropertyAndPortfolioView: React.FC<IntellectualProperty
                 Encarregado de Proteção de Dados (DPO)
               </h4>
               <p>
-                Para exercer seus direitos como titular de dados ou esclarecer dúvidas sobre a governança de privacidade, entre em contato com nosso canal institucional de conformidade: <strong>privacidade@canistech.com.br</strong>.
+                Para exercer seus direitos como titular de dados ou esclarecer dúvidas sobre a governança de privacidade, entre em contato com nosso canal institucional de conformidade: <strong>privacidade@canistech.net.br</strong>.
               </p>
             </div>
           </div>

@@ -13,6 +13,7 @@ import {
   generateAndDownloadOfficialRgCard,
   createOfficialRgCardPdfBlobUrl,
 } from '../utils/rgCardPdfGenerator';
+import { formatExactBiologicalAgeRgc } from '../utils/vaccineUtils';
 import {
   ShieldCheck,
   AlertTriangle,
@@ -137,7 +138,7 @@ export const OfficialRgcDocument: React.FC<OfficialRgcDocumentProps> = ({
       ? `${window.location.origin}/?view=dossier&dogId=${encodeURIComponent(
           dog.id
         )}&rgc=${encodeURIComponent(formattedRgcNumber)}`
-      : `https://canistech.com.br/?view=dossier&dogId=${dog.id}&rgc=${formattedRgcNumber}`;
+      : `https://canistech.net.br/?view=dossier&dogId=${dog.id}&rgc=${formattedRgcNumber}`;
 
   const handlePrint = () => {
     if (!hasPhoto || isDeceased || isBiennialExpired) return;
@@ -248,6 +249,8 @@ export const OfficialRgcDocument: React.FC<OfficialRgcDocumentProps> = ({
             break-after: avoid !important;
             break-inside: avoid !important;
             -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+            z-index: 999999 !important;
             print-color-adjust: exact !important;
             z-index: 999999 !important;
           }
@@ -538,7 +541,7 @@ export const OfficialRgcDocument: React.FC<OfficialRgcDocumentProps> = ({
 
                   {/* Data de Nascimento e Fase Biológica (SEM PESO/ESCORE) */}
                   <div className="grid grid-cols-12 gap-1 pb-1 border-b border-slate-300">
-                    <div className="col-span-7">
+                    <div className="col-span-6">
                       <span className="text-[8px] uppercase font-bold text-slate-500 tracking-wider block">
                         Data de Nascimento
                       </span>
@@ -546,12 +549,12 @@ export const OfficialRgcDocument: React.FC<OfficialRgcDocumentProps> = ({
                         {dog.birthDate || '--/--/----'}
                       </p>
                     </div>
-                    <div className="col-span-5 text-right">
+                    <div className="col-span-6 text-right">
                       <span className="text-[8px] uppercase font-bold text-slate-500 tracking-wider block">
-                        Fase Biológica
+                        Fase Biológica / Idade
                       </span>
-                      <p className="text-[9px] sm:text-[9.5px] font-bold text-slate-800 uppercase leading-tight">
-                        {dog.lifeStage || (dog.ageYears < 1 ? 'Filhote' : 'Adulto')} ({dog.ageYears}a)
+                      <p className="text-[8.5px] sm:text-[9.5px] font-bold text-slate-900 uppercase leading-tight truncate">
+                        {formatExactBiologicalAgeRgc(dog.birthDate, dog.lifeStage, dog.ageYears)}
                       </p>
                     </div>
                   </div>
@@ -724,7 +727,7 @@ export const OfficialRgcDocument: React.FC<OfficialRgcDocumentProps> = ({
                 <div className="font-mono text-[7px] sm:text-[8px] tracking-widest text-slate-700 font-bold leading-tight break-all">
                   I&lt;BRACANISTECH&lt;&lt;{formattedRgcNumber.replace(/[^A-Z0-9]/g, '')}&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;
                   <br />
-                  {dog.name.toUpperCase().replace(/[^A-Z]/g, '')}&lt;&lt;DOGOS&lt;&lt;WWW.CANISTECH.COM.BR&lt;&lt;&lt;&lt;&lt;
+                  {dog.name.toUpperCase().replace(/[^A-Z]/g, '')}&lt;&lt;DOGOS&lt;&lt;WWW.CANISTECH.NET.BR&lt;&lt;&lt;&lt;&lt;
                 </div>
                 <p className="text-[6.5px] text-slate-500 text-center mt-1 uppercase font-medium leading-none truncate">
                   Documento Oficial de Biometria Canina • CanisTech Security Guard

@@ -23,8 +23,45 @@ export interface VaccineWithProximity extends VaccineRecord {
 }
 
 /**
- * Parses date string in DD/MM/YYYY or YYYY-MM-DD format into a valid Date object (at 00:00:00).
+ * Formata a idade biológica exata para a Cédula RGC e Carteirinha:
+ * - Se < 1 mês (ex: 2 a 4 semanas): 'FILHOTE (X SEMANAS)'
+ * - Se < 12 meses: 'FILHOTE (X MESES)'
+ * - Se >= 12 meses: 'ADULTO (X ANOS)' ou fase biológica equivalente
  */
+export function formatExactBiologicalAgeRgc(birthDateStr?: string, lifeStage?: string, fallbackYears: number = 1): string {
+  if (!birthDateStr) {
+    const stage = (lifeStage || 'ADULTO').toUpperCase();
+    return `${stage} (${fallbackYears} ANOS)`;
+  }
+
+  try {
+    const birth = parseDateBR(birthDateStr);
+    const now = new Date();
+    if (isNaN(birth.getTime()) || birth > now) {
+      return `FILHOTE (1 MÊS)`;
+    }
+
+    const diffMs = now.getTime() - birth.getTime();
+    const diffDays = Math.floor(diffMs / (24 * 3600 * 1000));
+    const totalMonths = (now.getFullYear() - birth.getFullYear()) * 12 + (now.getMonth() - birth.getMonth());
+
+    if (diffDays < 30) {
+      const weeks = Math.max(1, Math.floor(diffDays / 7));
+      return `FILHOTE (${weeks} SEMANAS)`;
+    }
+
+    if (totalMonths < 12) {
+      const months = Math.max(1, totalMonths);
+      return months === 1 ? `FILHOTE (1 MÊS)` : `FILHOTE (${months} MESES)`;
+    }
+
+    const years = Math.floor(totalMonths / 12);
+    const stage = (lifeStage || (years >= 8 ? 'SÊNIOR' : 'ADULTO')).toUpperCase();
+    return years === 1 ? `${stage} (1 ANO)` : `${stage} (${years} ANOS)`;
+  } catch {
+    return `ADULTO (${fallbackYears} ANOS)`;
+  }
+}
 export function parseDateBR(dateStr: string): Date {
   if (!dateStr) return new Date();
 
@@ -301,7 +338,7 @@ export function generateVaccine7dEmailContent(dog: DogProfile, vaccine: VaccineR
     subject,
     preheader,
     tutorName: dog.tutorName,
-    tutorEmail: dog.tutorEmail || 'tutor@canistech.com.br',
+    tutorEmail: dog.tutorEmail || 'tutor@canistech.net.br',
     dogName: dog.name,
     dogBreed: dog.breed,
     dogPhoto: dog.photoUrl,

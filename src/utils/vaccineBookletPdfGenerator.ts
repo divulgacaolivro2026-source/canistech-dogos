@@ -1081,7 +1081,7 @@ export function buildVaccineBookletPdfDoc(
       ? `${window.location.origin}/?view=vacinas&dogId=${encodeURIComponent(
           dog.id
         )}&rgc=${encodeURIComponent(rgcFormatted)}`
-      : `https://canistech.com.br/?view=vacinas&dogId=${dog.id}&rgc=${rgcFormatted}`;
+      : `https://canistech.net.br/?view=vacinas&dogId=${dog.id}&rgc=${rgcFormatted}`;
 
   const { booklet1Doses, booklet2Doses } = buildLifetimeBookletDoses(dog, doses);
 

@@ -610,14 +610,14 @@ export const DogTrainingGuideView: React.FC<DogTrainingGuideViewProps> = ({
                         Chave PIX Oficial CanisTech:
                       </span>
                       <span className="font-mono text-slate-800 dark:text-slate-200 text-xs font-semibold truncate block">
-                        apoio.gold@canistech.com.br
+                        apoio.gold@canistech.net.br
                       </span>
                     </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => {
-                      navigator.clipboard.writeText('apoio.gold@canistech.com.br');
+                      navigator.clipboard.writeText('apoio.gold@canistech.net.br');
                       showToast('Chave PIX copiada com sucesso!');
                     }}
                     className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg text-xs font-bold transition-colors shrink-0"

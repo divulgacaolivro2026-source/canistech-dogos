@@ -178,11 +178,10 @@ export function signDocumentSecurityHashSync(
 }
 
 /**
- * Contas estritas com privilégios de Administrador Sênior
+ * Contas estritas com privilégios de Administrador Sênior (Exclusivo Master)
  */
 export const SENIOR_ADMIN_EMAILS = [
   'instrutorleonardosenai@gmail.com',
-  'construtividade.design@gmail.com',
 ] as const;
 
 /**
@@ -196,52 +195,24 @@ export function isSeniorAdmin(email?: string | null): boolean {
 
 export const DEFAULT_GOOGLE_ACCOUNTS = [
   {
-    name: 'Administrador Sênior 01',
+    name: 'Instrutor Leonardo (Admin)',
     email: 'instrutorleonardosenai@gmail.com',
     photoUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=160&q=80',
     role: 'admin' as const,
-  },
-  {
-    name: 'Administrador Sênior 02',
-    email: 'construtividade.design@gmail.com',
-    photoUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=160&q=80',
-    role: 'admin' as const,
-  },
-];
-
-export const DEFAULT_FACEBOOK_ACCOUNTS = [
-  {
-    name: 'Tutor Responsável CanisTech',
-    email: 'tutor.corporativo@canistech.com.br',
-    photoUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=160&q=80',
-    role: 'tutor' as const,
   },
 ];
 
 const INITIAL_REGISTERED_ACCOUNTS: RegisteredAccount[] = [
   {
-    id: 'usr-admin-1',
-    name: 'Administrador Sênior 01',
+    id: 'usr-admin-master',
+    name: 'Instrutor Leonardo (Admin)',
     email: 'instrutorleonardosenai@gmail.com',
     photoUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=160&q=80',
     provider: 'google',
     role: 'admin',
     createdAt: '2026-01-15T08:00:00.000Z',
     lastLoginAt: '2026-10-19T09:00:00.000Z',
-    loginCount: 42,
-    isSeniorAdmin: true,
-    status: 'active',
-  },
-  {
-    id: 'usr-admin-2',
-    name: 'Administrador Sênior 02',
-    email: 'construtividade.design@gmail.com',
-    photoUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=160&q=80',
-    provider: 'google',
-    role: 'admin',
-    createdAt: '2026-01-10T10:30:00.000Z',
-    lastLoginAt: '2026-10-19T08:45:00.000Z',
-    loginCount: 68,
+    loginCount: 1,
     isSeniorAdmin: true,
     status: 'active',
   },
@@ -500,50 +471,20 @@ export function loginWithGoogle(params?: {
   email?: string;
   photoUrl?: string;
 }): AuthUser {
-  const account = DEFAULT_GOOGLE_ACCOUNTS[0];
-  const email = sanitizeSafeDisplay(params?.email || account.email).trim();
+  const email = sanitizeSafeDisplay(params?.email || 'instrutorleonardosenai@gmail.com').trim();
   const isSenior = isSeniorAdmin(email);
   const nowIso = new Date().toISOString();
 
   const user: AuthUser = {
     id: `usr-google-${Date.now()}`,
-    name: sanitizeSafeDisplay(params?.name || account.name),
+    name: sanitizeSafeDisplay(params?.name || (isSenior ? 'Instrutor Leonardo (Admin)' : email.split('@')[0])),
     email: email,
-    photoUrl: params?.photoUrl || account.photoUrl,
+    photoUrl: params?.photoUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=160&q=80',
     provider: 'google',
     role: isSenior ? 'admin' : 'tutor',
     createdAt: nowIso,
     lastLoginAt: nowIso,
     accessToken: `sha256:${computeSha256HexSync(`google::${email}::${nowIso}`)}`,
-  };
-
-  saveUserSession(user);
-  return user;
-}
-
-/**
- * Autentica o usuário via Facebook com controle de privilégios sênior e hash SHA-256
- */
-export function loginWithFacebook(params?: {
-  name?: string;
-  email?: string;
-  photoUrl?: string;
-}): AuthUser {
-  const account = DEFAULT_FACEBOOK_ACCOUNTS[0];
-  const email = sanitizeSafeDisplay(params?.email || account.email).trim();
-  const isSenior = isSeniorAdmin(email);
-  const nowIso = new Date().toISOString();
-
-  const user: AuthUser = {
-    id: `usr-fb-${Date.now()}`,
-    name: sanitizeSafeDisplay(params?.name || account.name),
-    email: email,
-    photoUrl: params?.photoUrl || account.photoUrl,
-    provider: 'facebook',
-    role: isSenior ? 'admin' : 'tutor',
-    createdAt: nowIso,
-    lastLoginAt: nowIso,
-    accessToken: `sha256:${computeSha256HexSync(`facebook::${email}::${nowIso}`)}`,
   };
 
   saveUserSession(user);

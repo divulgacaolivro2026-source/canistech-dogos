@@ -56,6 +56,8 @@ import {
   syncDogProfileDualMode,
   syncVaccineRecordDualMode,
   syncVaultWithSupabaseDualMode,
+  fetchDogsFromSupabase,
+  supabase,
 } from './services/supabaseClient';
 import { Calendar, Lock, ShieldCheck, Syringe } from 'lucide-react';
 
@@ -271,7 +273,7 @@ export default function App() {
     }
   }, [currentUser, dogs]);
 
-  // Recarrega o cofre seguro sempre que o usuário alternar de conta
+  // Recarrega o cofre seguro sempre que o usuário alternar de conta e sincroniza com o Supabase
   useEffect(() => {
     if (currentUser) {
       const v = loadUserVault(currentUser.email, currentUser);
@@ -280,6 +282,18 @@ export default function App() {
       setWeightHistory(v.weightHistory);
       setVaccines(v.vaccines);
       setActivityHistory(v.activityHistory);
+
+      // Consulta cães reais no Supabase (se configurado) filtrados pelo owner_id
+      void fetchDogsFromSupabase(currentUser.id).then((cloudDogs) => {
+        if (cloudDogs && cloudDogs.length > 0) {
+          setDogs(cloudDogs);
+          setActiveDogId((prev) => (cloudDogs.some((d) => d.id === prev) ? prev : cloudDogs[0].id));
+          persistCurrentVault({
+            dogs: cloudDogs,
+            activeDogId: cloudDogs[0].id,
+          });
+        }
+      });
 
       // Sincronização transparente Dual-Mode (Supabase Cloud quando configurado, ou Local Vault)
       void syncVaultWithSupabaseDualMode(v.dogs, v.vaccines, currentUser.id, currentUser.token);

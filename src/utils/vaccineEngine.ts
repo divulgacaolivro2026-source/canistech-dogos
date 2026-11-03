@@ -927,7 +927,7 @@ export function generateVaccine7dEmailDetails(
   dose: ScheduledDoseItem,
   tutorEmail: string
 ) {
-  const email = tutorEmail || dog.tutorEmail || 'tutor@canistech.com.br';
+  const email = tutorEmail || dog.tutorEmail || 'tutor@canistech.net.br';
   const chrono = calculateDogAgeChronology(dog.birthDate);
   const currentAgeStr =
     chrono.ageYears >= 1
