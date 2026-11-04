@@ -40,27 +40,38 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   const handleGoogleOAuthLogin = async () => {
     setIsLoading(true);
 
-    // Se o Supabase Cloud estiver configurado com credenciais válidas, aciona OAuth nativo
     if (isSupabaseCloudConfigured() && supabase) {
       try {
         showToast('Redirecionando para autenticação segura com o Google...');
+        const redirectTarget = window.location.search
+          ? `${window.location.origin}${window.location.pathname}${window.location.search}`
+          : window.location.origin;
+
         const { error } = await supabase.auth.signInWithOAuth({
           provider: 'google',
           options: {
-            redirectTo: window.location.origin,
+            redirectTo: redirectTarget,
+            queryParams: { prompt: 'select_account' },
           },
         });
         if (error) {
-          console.warn('Falha no Supabase OAuth, acionando fallback transparente:', error);
-          handleFallbackGoogleLogin();
+          console.error('Falha no Supabase OAuth:', error);
+          showToast('Não foi possível iniciar o login com o Google. Tente novamente.');
+          setIsLoading(false);
         }
       } catch (err) {
-        console.warn('Erro ao conectar Supabase OAuth:', err);
-        handleFallbackGoogleLogin();
+        console.error('Erro ao conectar Supabase OAuth:', err);
+        showToast('Erro de conexão no login. Tente novamente.');
+        setIsLoading(false);
       }
-    } else {
-      // Modo Local Seguro / Dual-Mode sem credenciais ativas
+      return;
+    }
+
+    if ((import.meta as any).env?.DEV) {
       handleFallbackGoogleLogin();
+    } else {
+      showToast('Login temporariamente indisponível.');
+      setIsLoading(false);
     }
   };
 

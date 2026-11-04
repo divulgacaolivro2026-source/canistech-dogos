@@ -29,7 +29,7 @@ import {
   INITIAL_AD_CAMPAIGNS,
   REGION_GEO_STATS,
 } from './data/mockData';
-import { getCurrentUser, clearUserSession, isSeniorAdmin, logAuditEvent } from './services/authService';
+import { getCurrentUser, clearUserSession, isSeniorAdmin, logAuditEvent, saveUserSession, buildAuthUserFromSupabaseSession } from './services/authService';
 
 import { Navbar } from './components/Navbar';
 import { DogOSDashboard } from './components/DogOSDashboard';
@@ -58,6 +58,7 @@ import {
   syncVaultWithSupabaseDualMode,
   fetchDogsFromSupabase,
   supabase,
+  isSupabaseCloudConfigured,
 } from './services/supabaseClient';
 import { Calendar, Lock, ShieldCheck, Syringe } from 'lucide-react';
 
@@ -341,11 +342,13 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    void supabase?.auth.signOut();
     clearUserSession();
     setCurrentUser(null);
   };
 
   const handleSwitchAccount = () => {
+    void supabase?.auth.signOut();
     clearUserSession();
     setCurrentUser(null);
   };
@@ -358,6 +361,36 @@ export default function App() {
       setEmergencyScanNotice(null);
     }
   };
+
+  const loginSuccessRef = React.useRef(handleLoginSuccess);
+  loginSuccessRef.current = handleLoginSuccess;
+
+  useEffect(() => {
+    if (!isSupabaseCloudConfigured() || !supabase) return;
+
+    const { data } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
+        if (session?.user) {
+          const incoming = buildAuthUserFromSupabaseSession(session);
+          const stored = getCurrentUser();
+          if (!stored || stored.id !== incoming.id) {
+            saveUserSession(incoming);
+            const saved = getCurrentUser();
+            if (saved) loginSuccessRef.current(saved);
+          }
+        } else if (event === 'INITIAL_SESSION' && getCurrentUser()) {
+          clearUserSession();
+          setCurrentUser(null);
+        }
+      }
+      if (event === 'SIGNED_OUT') {
+        clearUserSession();
+        setCurrentUser(null);
+      }
+    });
+
+    return () => data.subscription.unsubscribe();
+  }, []);
 
   // Handler: Update existing dog profile (com ciclo de vida e encerramento por óbito)
   const handleUpdateDog = (updatedDog: DogProfile) => {

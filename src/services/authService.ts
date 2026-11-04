@@ -180,9 +180,7 @@ export function signDocumentSecurityHashSync(
 /**
  * Contas estritas com privilégios de Administrador Sênior (Exclusivo Master)
  */
-export const SENIOR_ADMIN_EMAILS = [
-  'instrutorleonardosenai@gmail.com',
-] as const;
+export const SENIOR_ADMIN_EMAILS: string[] = ['instrutorleonardosenai@gmail.com', 'divulgacaolivro2026@gmail.com'];
 
 /**
  * Validação de privilégios de Administrador Sênior
@@ -489,4 +487,24 @@ export function loginWithGoogle(params?: {
 
   saveUserSession(user);
   return user;
+}
+
+export function buildAuthUserFromSupabaseSession(session: Session): AuthUser {
+  const sbUser = session.user;
+  const meta = (sbUser.user_metadata || {}) as Record<string, any>;
+  const email = String(sbUser.email || meta.email || '').trim().toLowerCase();
+  const nowIso = new Date().toISOString();
+  const isSenior = meta.email_verified !== false && isSeniorAdmin(email);
+
+  return {
+    id: sbUser.id,
+    name: sanitizeSafeDisplay(meta.full_name || meta.name || email.split('@')[0]),
+    email,
+    photoUrl: meta.avatar_url || meta.picture || '',
+    provider: 'google',
+    role: isSenior ? 'admin' : 'tutor',
+    createdAt: sbUser.created_at || nowIso,
+    lastLoginAt: nowIso,
+    accessToken: '',
+  };
 }

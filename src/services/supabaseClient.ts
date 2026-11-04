@@ -3,11 +3,6 @@
  * ============================================================================
  * CANISTECH DOGOS — CONECTOR HÍBRIDO SUPABASE DUAL-MODE (CLOUD + LOCAL VAULT)
  * ============================================================================
- * Modo Dual-Mode Inteligente:
- * 1. Cloud Mode (PostgreSQL + RLS + Storage): Ativado automaticamente quando as
- *    variáveis `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` estão configuradas.
- * 2. Local Vault Fallback Mode: Caso as credenciais não estejam definidas ou o
- *    dispositivo esteja offline, opera com 100% de transparência no Cofre Local Seguro.
  */
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
@@ -20,10 +15,18 @@ export interface SupabaseDualModeStatus {
   lastSyncAt: string | null;
 }
 
-const envObj = (import.meta as unknown as { env?: Record<string, string | undefined> }).env || {};
+const ENV_URL = (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.VITE_SUPABASE_URL?.trim().replace(/\/+$/, '');
+const ENV_KEY = (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.VITE_SUPABASE_ANON_KEY?.trim();
 
-export const SUPABASE_URL = 'https://cfkwuzyzrpstcihmtrje.supabase.co';
-export const SUPABASE_ANON_KEY = 'sb_publishable_rNA5M-wQT9mVPXqnh7h0JQ_63n9Y1hH';
+const envOk = Boolean(
+  ENV_URL &&
+    ENV_URL.startsWith('https://') &&
+    !ENV_URL.includes('seu-projeto') &&
+    ENV_KEY
+);
+
+export const SUPABASE_URL = envOk ? ENV_URL! : 'https://cfkwuzyzrpstcihmtrje.supabase.co';
+export const SUPABASE_ANON_KEY = envOk ? ENV_KEY! : 'sb_publishable_rNA5M-wQT9mVPXqnh7h0JQ_63n9Y1hH';
 
 export function isSupabaseCloudConfigured(): boolean {
   return Boolean(
@@ -35,14 +38,14 @@ export function isSupabaseCloudConfigured(): boolean {
 }
 
 /**
- * Cliente oficial Supabase JS (com Auth, Database e Storage)
+ * Cliente oficial Supabase JS (com Auth PKCE, Database e Storage)
  */
 export const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: true,
-    flowType: 'implicit',
+    flowType: 'pkce',
   },
 });
 
@@ -64,10 +67,25 @@ export function getSupabaseDualModeStatus(): SupabaseDualModeStatus {
 }
 
 /**
- * Upload de Foto Biométrica WebP para o Supabase Storage (Bucket dog-photos)
- * Caminho padrão: `${userId}/${Date.now()}.webp`
- * Retorna a publicUrl ou null caso Supabase Storage não esteja configurado
+ * Evita colisão de chave primária (TEXT PRIMARY KEY) entre diferentes tutores
+ * quando sincronizam os cães/vacinas iniciais de demonstração (ex: dog-thor)
  */
+function scopeCloudRecordId(rawId: string, ownerId?: string): string {
+  if (!ownerId || !rawId) return rawId;
+  const prefix = ownerId.slice(0, 8);
+  if (rawId.startsWith(`${prefix}_`)) return rawId;
+  if (rawId === 'dog-thor' || rawId === 'dog-luna' || rawId === 'dog-max' || /^vac-\d+$/.test(rawId) || rawId.startsWith('vac-v')) {
+    return `${prefix}_${rawId}`;
+  }
+  return rawId;
+}
+
+function unscopeCloudDogId(cloudId: string, ownerId?: string): string {
+  if (!ownerId || !cloudId) return cloudId;
+  const prefix = `${ownerId.slice(0, 8)}_`;
+  return cloudId.startsWith(prefix) ? cloudId.slice(prefix.length) : cloudId;
+}
+
 export async function uploadDogPhotoToSupabase(
   blob: Blob,
   userId: string = 'anon'
@@ -103,13 +121,11 @@ export async function uploadDogPhotoToSupabase(
   }
 }
 
-/**
- * Converte linha do Supabase (`public.dogs`) para o formato da aplicação (`DogProfile`)
- */
 export function mapSupabaseRowToDog(row: any): DogProfile {
   const currentWeight = Number(row.current_weight) || 15.0;
+  const localId = unscopeCloudDogId(String(row.id || ''), row.owner_id);
   return {
-    id: row.id,
+    id: localId,
     name: row.name,
     breed: row.breed,
     breedGroup: 'companhia',
@@ -148,12 +164,9 @@ export function mapSupabaseRowToDog(row: any): DogProfile {
   };
 }
 
-/**
- * Converte `DogProfile` para o schema da tabela `public.dogs`
- */
 export function mapDogToSupabasePayload(dog: DogProfile, ownerId?: string) {
   return {
-    id: dog.id,
+    id: scopeCloudRecordId(dog.id, ownerId),
     ...(ownerId ? { owner_id: ownerId } : {}),
     name: dog.name,
     breed: dog.breed,
@@ -181,11 +194,11 @@ export function mapDogToSupabasePayload(dog: DogProfile, ownerId?: string) {
   };
 }
 
-/**
- * Consulta a lista de cães no Supabase para o usuário ativo (com RLS ou filtro ownerId)
- */
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function fetchDogsFromSupabase(userId?: string): Promise<DogProfile[] | null> {
   if (!supabase || !isSupabaseCloudConfigured()) return null;
+  if (userId && !UUID_REGEX.test(userId)) return null;
 
   try {
     let query = supabase.from('dogs').select('*').order('created_at', { ascending: false });
@@ -201,11 +214,9 @@ export async function fetchDogsFromSupabase(userId?: string): Promise<DogProfile
   }
 }
 
-/**
- * Salva ou atualiza um cão no Supabase (`upsert`)
- */
 export async function upsertDogInSupabase(dog: DogProfile, ownerId?: string): Promise<boolean> {
   if (!supabase || !isSupabaseCloudConfigured()) return false;
+  if (ownerId && !UUID_REGEX.test(ownerId)) return false;
 
   try {
     const payload = mapDogToSupabasePayload(dog, ownerId);
@@ -221,14 +232,13 @@ export async function upsertDogInSupabase(dog: DogProfile, ownerId?: string): Pr
   }
 }
 
-/**
- * Remove um cão no Supabase
- */
 export async function deleteDogFromSupabase(dogId: string, ownerId?: string): Promise<boolean> {
   if (!supabase || !isSupabaseCloudConfigured()) return false;
+  if (ownerId && !UUID_REGEX.test(ownerId)) return false;
 
   try {
-    let query = supabase.from('dogs').delete().eq('id', dogId);
+    const cloudDogId = scopeCloudRecordId(dogId, ownerId);
+    let query = supabase.from('dogs').delete().eq('id', cloudDogId);
     if (ownerId) {
       query = query.eq('owner_id', ownerId);
     }
@@ -240,10 +250,6 @@ export async function deleteDogFromSupabase(dogId: string, ownerId?: string): Pr
   }
 }
 
-/**
- * Sincroniza um exemplar canino (DogProfile) em modo Dual-Mode:
- * Salva sempre no Cofre Local e replica para a tabela `dogs` no Supabase quando ativo.
- */
 export async function syncDogProfileDualMode(
   dog: DogProfile,
   ownerId?: string,
@@ -263,9 +269,6 @@ export async function syncDogProfileDualMode(
   return { syncedToCloud: false };
 }
 
-/**
- * Sincroniza registros de vacinação (VaccineRecord) em modo Dual-Mode
- */
 export async function syncVaccineRecordDualMode(
   vaccine: VaccineRecord,
   ownerId?: string,
@@ -274,12 +277,15 @@ export async function syncVaccineRecordDualMode(
   if (!supabase || !isSupabaseCloudConfigured()) {
     return { syncedToCloud: false };
   }
+  if (ownerId && !UUID_REGEX.test(ownerId)) {
+    return { syncedToCloud: false };
+  }
 
   try {
     const payload = {
-      id: vaccine.id,
+      id: scopeCloudRecordId(vaccine.id, ownerId),
       ...(ownerId ? { owner_id: ownerId } : {}),
-      dog_id: vaccine.dogId || null,
+      dog_id: vaccine.dogId ? scopeCloudRecordId(vaccine.dogId, ownerId) : null,
       name: vaccine.name,
       description: vaccine.description,
       manufacturer: vaccine.manufacturer,
@@ -300,15 +306,15 @@ export async function syncVaccineRecordDualMode(
   }
 }
 
-/**
- * Sincroniza o registro de Consentimento LGPD (Art. 7º e 8º da Lei 13.709/2018)
- */
 export async function syncLgpdConsentDualMode(
   consent: LgpdConsentRecord,
   ownerId?: string,
   _accessToken?: string
 ): Promise<{ syncedToCloud: boolean }> {
   if (!supabase || !isSupabaseCloudConfigured()) {
+    return { syncedToCloud: false };
+  }
+  if (ownerId && !UUID_REGEX.test(ownerId)) {
     return { syncedToCloud: false };
   }
 
@@ -330,9 +336,6 @@ export async function syncLgpdConsentDualMode(
   }
 }
 
-/**
- * Sincroniza eventos de auditoria (AuditLogEntry) em modo Dual-Mode
- */
 export async function syncAuditLogDualMode(
   entry: AuditLogEntry,
   ownerId?: string,
@@ -341,8 +344,16 @@ export async function syncAuditLogDualMode(
   if (!supabase || !isSupabaseCloudConfigured()) {
     return { syncedToCloud: false };
   }
+  if (ownerId && !UUID_REGEX.test(ownerId)) {
+    return { syncedToCloud: false };
+  }
 
   try {
+    const safeStatus =
+      entry.status === 'SUCCESS' || entry.status === 'WARNING' || entry.status === 'REVOKED'
+        ? entry.status
+        : 'WARNING';
+
     const payload = {
       id: entry.id,
       ...(ownerId ? { owner_id: ownerId } : {}),
@@ -351,7 +362,7 @@ export async function syncAuditLogDualMode(
       action: entry.action,
       provider: entry.provider,
       ip_info: entry.ipMock,
-      status: entry.status,
+      status: safeStatus,
       details: entry.details,
     };
 
@@ -362,9 +373,6 @@ export async function syncAuditLogDualMode(
   }
 }
 
-/**
- * Sincroniza em lote o Cofre Local com o Supabase PostgreSQL caso o modo Cloud esteja ativo
- */
 export async function syncVaultWithSupabaseDualMode(
   dogs: DogProfile[],
   vaccines: VaccineRecord[],
