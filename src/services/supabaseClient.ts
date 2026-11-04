@@ -22,8 +22,8 @@ export interface SupabaseDualModeStatus {
 
 const envObj = (import.meta as unknown as { env?: Record<string, string | undefined> }).env || {};
 
-export const SUPABASE_URL = (envObj.VITE_SUPABASE_URL || '').trim().replace(/\/+$/, '');
-export const SUPABASE_ANON_KEY = (envObj.VITE_SUPABASE_ANON_KEY || '').trim();
+export const SUPABASE_URL = 'https://cfkwuzyzrpstcihmtrje.supabase.co';
+export const SUPABASE_ANON_KEY = 'sb_publishable_rNA5M-wQT9mVPXqnh7h0JQ_63n9Y1hH';
 
 export function isSupabaseCloudConfigured(): boolean {
   return Boolean(
@@ -37,15 +37,14 @@ export function isSupabaseCloudConfigured(): boolean {
 /**
  * Cliente oficial Supabase JS (com Auth, Database e Storage)
  */
-export const supabase: SupabaseClient | null = isSupabaseCloudConfigured()
-  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: true,
-      },
-    })
-  : null;
+export const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+    flowType: 'implicit',
+  },
+});
 
 export function getSupabaseDualModeStatus(): SupabaseDualModeStatus {
   const configured = isSupabaseCloudConfigured();
