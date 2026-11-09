@@ -19,11 +19,13 @@ import {
 export interface LgpdConsentBannerProps {
   userEmail?: string | null;
   onConsentAccepted?: (record: LgpdConsentRecord) => void;
+  onDecline?: () => void;
 }
 
 export const LgpdConsentBanner: React.FC<LgpdConsentBannerProps> = ({
-  userEmail,
+   userEmail,
   onConsentAccepted,
+  onDecline,
 }) => {
   const [consentRecord, setConsentRecord] = useState<LgpdConsentRecord | null>(() =>
     getLgpdConsent(userEmail)
@@ -187,6 +189,18 @@ export const LgpdConsentBanner: React.FC<LgpdConsentBannerProps> = ({
             )}
           </button>
         </div>
+
+        {onDecline && (
+          <div className="text-center">
+            <button
+              type="button"
+              onClick={onDecline}
+              className="text-[11px] text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 underline cursor-pointer"
+            >
+              Não concordo — sair da plataforma
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

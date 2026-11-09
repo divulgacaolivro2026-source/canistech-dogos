@@ -514,10 +514,9 @@ export default function App() {
   const isSenior = isSeniorAdmin(currentUser?.email);
 
   // STRICT GATE: Só poderá entrar na plataforma através do login via Google ou Facebook
-  if (!currentUser) {
+ if (!currentUser) {
     return (
       <>
-        <LgpdConsentBanner userEmail={undefined} />
         <LoginScreen
           onLoginSuccess={handleLoginSuccess}
           emergencyScanNotice={emergencyScanNotice}
@@ -529,7 +528,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#F8F9FA] dark:bg-[#090D16] text-[#0B1C30] dark:text-[#F1F5F9] flex flex-col font-sans transition-colors duration-200">
       {/* Gate Obrigatório de Consentimento LGPD no Primeiro Acesso */}
-      <LgpdConsentBanner userEmail={currentUser.email} />
+      <LgpdConsentBanner userEmail={currentUser.email} onDecline={handleLogout} />
       {/* Top Navbar */}
       <Navbar
         currentView={currentView}
